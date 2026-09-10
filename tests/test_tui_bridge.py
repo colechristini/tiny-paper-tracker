@@ -33,6 +33,77 @@ def test_bridge_lists_title_sorted_and_mutates_status(tmp_path: Path) -> None:
         assert changed["ok"] and changed["item"]["status"] == "reading"
 
 
+def test_bridge_list_note_filters_combine_with_status_group_title_and_sections(
+    tmp_path: Path,
+) -> None:
+    with Database(tmp_path / "library.db") as library:
+        root = library.create_group("Root")
+        child = library.create_group("Child", parent=root["id"])
+        with_note, _ = library.add(
+            ResolvedItem(
+                title="Match child",
+                url="https://child.example/",
+                identifiers=[("url", "https://child.example/")],
+            ),
+            groups=[child["id"]],
+        )
+        library.set_note_path(with_note["id"], "Reading/child.md")
+        library.set_status(with_note["id"], "reading")
+        without_note, _ = library.add(
+            ResolvedItem(
+                title="Match root",
+                url="https://root.example/",
+                identifiers=[("url", "https://root.example/")],
+            ),
+            groups=[root["id"]],
+        )
+        empty_note, _ = library.add(
+            ResolvedItem(
+                title="Match empty",
+                url="https://empty.example/",
+                identifiers=[("url", "https://empty.example/")],
+            ),
+            groups=[child["id"]],
+        )
+        library.connection.execute("UPDATE items SET note_path='' WHERE id=?", (empty_note["id"],))
+        library.connection.commit()
+
+        has_note = _handle(
+            {
+                "version": 1,
+                "op": "list",
+                "status": "reading",
+                "group": root["id"],
+                "query": "Match",
+                "note_filter": "has_note",
+            },
+            library,
+        )
+        assert [item["id"] for item in has_note["items"]] == [with_note["id"]]
+        assert [section["item_ids"] for section in has_note["sections"]] == [[], [with_note["id"]]]
+
+        no_note = _handle(
+            {
+                "version": 1,
+                "op": "list",
+                "group": root["id"],
+                "query": "Match",
+                "note_filter": "no_note",
+            },
+            library,
+        )
+        assert {item["id"] for item in no_note["items"]} == {without_note["id"], empty_note["id"]}
+        assert [section["item_ids"] for section in no_note["sections"]] == [
+            [without_note["id"]],
+            [empty_note["id"]],
+        ]
+
+        omitted = _handle(
+            {"version": 1, "op": "list", "group": root["id"], "query": "Match"}, library
+        )
+        assert len(omitted["items"]) == 3
+
+
 def test_bridge_rejects_unknown_protocol_operation(tmp_path: Path) -> None:
     with Database(tmp_path / "library.db") as library:
         response = _handle({"version": 99, "op": "list"}, library, {})

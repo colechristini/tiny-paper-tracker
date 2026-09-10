@@ -122,9 +122,16 @@ def _list(request: dict[str, Any], library: Database) -> dict[str, Any]:
     status = request.get("status", "all")
     if status not in _STATUSES:
         raise DatabaseError(f"invalid status: {status}")
+    note_filter = request.get("note_filter", "all")
+    if note_filter not in {"all", "has_note", "no_note"}:
+        raise DatabaseError(f"invalid note_filter: {note_filter}")
     group = request.get("group")
     query = str(request.get("query", "")).strip().casefold()
     items = library.list_items(None if status == "all" else status, group=group)
+    if note_filter == "has_note":
+        items = [item for item in items if item.get("note_path")]
+    elif note_filter == "no_note":
+        items = [item for item in items if not item.get("note_path")]
     if query:
         items = [item for item in items if query in item["title"].casefold()]
     items.sort(key=lambda item: (item["title"].casefold(), item["id"]))
