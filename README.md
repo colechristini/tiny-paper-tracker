@@ -4,9 +4,9 @@ A local reading library for papers, blogs, and other web resources. SQLite owns
 metadata and read status; your Obsidian vault owns your writing. Zotero's
 Translation Server resolves metadata without the Zotero desktop app.
 
-The published **v0.1.0** provides the original six-command workflow. Current
-`main` is **0.2.0.dev0**, adding paper groups. There is no tracker web API or
-browser extension.
+The published **v0.2.0** provides the original six-command workflow plus flat
+paper groups. There is no tracker web API or browser extension. See
+[CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Quick start
 
