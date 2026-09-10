@@ -9,6 +9,7 @@ from tiny_reading_tracker.db import (
     AmbiguousItemError,
     Database,
     DatabaseError,
+    GroupNotFoundError,
     IdentityConflictError,
     ItemNotFoundError,
 )
@@ -71,6 +72,27 @@ def test_rename_item_refreshes_fts_and_preserves_state(tmp_path: Path) -> None:
             db.rename_item(item["id"][:8], "Nope")
         with pytest.raises(DatabaseError, match="empty"):
             db.rename_item(item["id"], "  ")
+
+
+def test_set_item_groups_replaces_direct_memberships_atomically(tmp_path: Path) -> None:
+    with Database(tmp_path / "library.sqlite3") as db:
+        root = db.create_group("Root")
+        child = db.create_group("Child", parent=root["id"])
+        other = db.create_group("Other")
+        item, _ = db.add(article(), groups=[root["id"], child["id"]])
+        db.connection.execute(
+            "UPDATE items SET status='read', note_path='Reading/keep.md' WHERE id=?", (item["id"],)
+        )
+        updated = db.set_item_groups(item["id"], [child["id"], child["id"]])
+        assert [group["id"] for group in updated["groups"]] == [child["id"]]
+        assert db.get_group(root["id"])["item_count"] == 1
+        assert db.get_group(other["id"])["item_count"] == 0
+        assert db.set_item_groups(item["id"], [])["groups"] == []
+        assert db.get(item["id"])["status"] == "read"
+        assert db.get(item["id"])["note_path"] == "Reading/keep.md"
+        with pytest.raises(GroupNotFoundError):
+            db.set_item_groups(item["id"], ["grp_missing", other["id"]])
+        assert db.get(item["id"])["groups"] == []
 
 
 def test_duplicate_adds_aliases_and_tags_but_preserves_fields(tmp_path: Path) -> None:

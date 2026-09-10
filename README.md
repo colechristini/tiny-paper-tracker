@@ -148,6 +148,11 @@ the unfiltered library and groups. In the list view, `Delete` (or macOS
 file intact. Press `F2` or uppercase `R` to rename the selected title inline;
 `Enter` saves and `Esc` cancels. Text deletion in the editor and search input
 keeps its normal meaning.
+Press `m` in list mode to edit group memberships. Move with the arrow keys or
+`j`/`k`, toggle with `Space`, apply with `Enter`, or cancel with `Esc`. Checkboxes
+show direct memberships: selecting a subgroup includes the paper in its
+parent's filtered view without checking the parent. Create groups with
+`lit group create` before assigning them in the picker.
 
 Existing databases automatically migrate from schema 1, 2, or 3 to schema 4
 in a transaction when opened. Existing metadata, groups, tags, notes, and

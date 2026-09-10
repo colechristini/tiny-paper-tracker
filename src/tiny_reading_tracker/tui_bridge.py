@@ -196,6 +196,17 @@ def _handle(
             return _response(item=library.rename_item(item_id, title))
         except DatabaseError as exc:
             return _error(str(exc), "request")
+    if operation == "set_item_groups":
+        item_id = request.get("id")
+        group_ids = request.get("group_ids")
+        if not isinstance(item_id, str) or not isinstance(group_ids, list):
+            return _error("set_item_groups requires string id and list group_ids", "request")
+        if any(not isinstance(value, str) for value in group_ids):
+            return _error("set_item_groups requires string group IDs", "request")
+        try:
+            return _response(item=library.set_item_groups(item_id, group_ids))
+        except DatabaseError as exc:
+            return _error(str(exc), "request")
     if operation == "delete_item":
         item_id = request.get("id")
         if not isinstance(item_id, str) or not item_id:

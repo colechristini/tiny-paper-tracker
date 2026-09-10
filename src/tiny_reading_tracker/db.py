@@ -811,6 +811,48 @@ class Database:
                 self.connection.rollback()
             raise
 
+    def set_item_groups(self, item_id: str, group_ids: list[str]) -> dict[str, Any]:
+        """Replace an item's direct group memberships using exact IDs."""
+        if not isinstance(item_id, str) or not item_id:
+            raise DatabaseError("set_item_groups requires a full item ID")
+        if not isinstance(group_ids, list) or any(
+            not isinstance(value, str) for value in group_ids
+        ):
+            raise DatabaseError("set_item_groups requires a list of group IDs")
+        group_ids = list(dict.fromkeys(group_ids))
+        if any(not value for value in group_ids):
+            raise DatabaseError("group IDs must not be empty")
+        try:
+            self._begin()
+            if (
+                self.connection.execute("SELECT 1 FROM items WHERE id=?", (item_id,)).fetchone()
+                is None
+            ):
+                raise ItemNotFoundError(f"item not found: {item_id}")
+            if group_ids:
+                placeholders = ",".join("?" for _ in group_ids)
+                found = {
+                    row[0]
+                    for row in self.connection.execute(
+                        f"SELECT id FROM groups WHERE id IN ({placeholders})", group_ids
+                    )
+                }
+                missing = [value for value in group_ids if value not in found]
+                if missing:
+                    raise GroupNotFoundError(f"group not found: {', '.join(missing)}")
+            self.connection.execute("DELETE FROM item_groups WHERE item_id=?", (item_id,))
+            self.connection.executemany(
+                "INSERT INTO item_groups(group_id,item_id) VALUES (?,?)",
+                ((group_id, item_id) for group_id in group_ids),
+            )
+            result = self._get_id(item_id)
+            self.connection.commit()
+            return result
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+
     def delete_item(self, item_id: str) -> None:
         """Delete one item by its exact full ID, retaining notes and shared records."""
         if not isinstance(item_id, str) or not item_id:
