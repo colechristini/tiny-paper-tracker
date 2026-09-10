@@ -1,6 +1,6 @@
 use crate::{
     model::{Item, group_name},
-    state::{App, StatusFilter},
+    state::{App, NoteFilter, StatusFilter},
 };
 use ratatui::{
     Frame,
@@ -21,7 +21,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
     if app.help {
-        let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\ng / h          next / previous group\nF2 / R         rename selected title\nm              edit memberships\nDelete/Backspace delete selected item\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
+        let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\na              add URL or identifier\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\n5 / 6          has-note / no-note filter\ng / h          next / previous group\nF2 / R         rename selected title\nm              edit memberships\nDelete/Backspace delete selected item\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
         frame.render_widget(
             Paragraph::new(help)
                 .block(Block::default().title(" Help ").borders(Borders::ALL))
@@ -70,6 +70,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .unwrap_or("all groups");
     let status = if let Some(error) = &app.error {
         format!("Error: {}", sanitize(error))
+    } else if let Some(notice) = &app.notice {
+        sanitize(notice)
     } else if app.searching {
         format!("Search: {}", sanitize(&app.search_input))
     } else {
@@ -79,8 +81,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
             sanitize(&app.query)
         };
         format!(
-            "{} · {} · {}",
+            "{} · {} · {} · {}",
             filter_label(app.filter),
+            note_filter_label(app.note_filter),
             sanitize(group),
             query_label,
         )
@@ -98,11 +101,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
             String::new(),
             &[
                 ("↑↓/jk", " move"),
+                ("a", " add"),
                 ("Enter", " edit"),
                 ("F2/R", " rename"),
                 ("m", " memberships"),
                 ("u/c/r", " status"),
                 ("1-4", " filter"),
+                ("5/6", " notes"),
                 ("g/h", " group"),
                 ("/", " search"),
                 ("f", " refresh"),
@@ -124,6 +129,59 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     .borders(Borders::ALL),
             ),
             area,
+        );
+    }
+    if let Some(add) = &app.add {
+        let area = centered_rect(92, 6, frame.area());
+        frame.render_widget(Clear, area);
+        let block = Block::default()
+            .title(" Add reading ")
+            .borders(Borders::ALL);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+        let destination = app
+            .group
+            .as_deref()
+            .and_then(|id| app.groups.iter().find(|group| group.id == id))
+            .map(|group| sanitize(&group.name))
+            .unwrap_or_else(|| "Ungrouped".into());
+        frame.render_widget(
+            Paragraph::new(format!("Destination: {destination}")),
+            rows[0],
+        );
+        let input_label = "URL or identifier: ";
+        let max = (rows[1].width as usize).saturating_sub(input_label.width());
+        frame.render_widget(
+            Paragraph::new(format!("{input_label}{}", rename_input(&add.buffer, max))),
+            rows[1],
+        );
+        let message = if add.busy() {
+            "Resolving metadata…".into()
+        } else {
+            app.error.as_deref().map(sanitize).unwrap_or_default()
+        };
+        let message_style = if add.busy() {
+            Style::default()
+        } else {
+            Style::default().fg(Color::Red)
+        };
+        frame.render_widget(Paragraph::new(message).style(message_style), rows[2]);
+        frame.render_widget(
+            Paragraph::new(if add.busy() {
+                "Adding… please wait"
+            } else {
+                "Enter add · Esc cancel"
+            }),
+            rows[3],
         );
     }
     if let Some(picker) = &app.membership {
@@ -545,6 +603,13 @@ fn filter_label(filter: StatusFilter) -> &'static str {
         StatusFilter::Read => "read",
     }
 }
+fn note_filter_label(filter: NoteFilter) -> &'static str {
+    match filter {
+        NoteFilter::All => "all notes",
+        NoteFilter::HasNote => "has note",
+        NoteFilter::NoNote => "no note",
+    }
+}
 pub fn sanitize(value: &str) -> String {
     value
         .chars()
@@ -560,7 +625,7 @@ mod tests {
         model::Group,
         model::{Item, Section},
         state::DisplayRow,
-        state::{App, EditorState, MembershipState},
+        state::{AddState, App, EditorState, MembershipState, NoteFilter},
     };
     use ratatui::{
         Terminal,
@@ -629,7 +694,9 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(text.contains("all · "));
+        assert!(text.contains("all notes"));
         assert!(text.contains("m memberships"));
+        assert!(text.contains("5/6 notes"));
         assert!(text.contains("g/h"));
         assert!(text.contains("Del delete"));
         let key = buffer
@@ -661,6 +728,22 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(text.contains("Error: visible error"));
+    }
+
+    #[test]
+    fn minimum_size_footer_shows_add_and_note_filter_controls() {
+        let app = App {
+            note_filter: NoteFilter::NoNote,
+            ..Default::default()
+        };
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("no note"));
+        assert!(text.contains("a add"));
+        assert!(text.contains("5/6 notes"));
     }
 
     #[test]
@@ -754,6 +837,56 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    #[test]
+    fn add_popup_renders_unicode_error_destination_and_busy_state_when_resized() {
+        let mut app = App {
+            groups: vec![Group {
+                id: "root".into(),
+                name: "Research".into(),
+                parent_id: None,
+            }],
+            group: Some("root".into()),
+            error: Some("translator unavailable; retry".into()),
+            ..Default::default()
+        };
+        app.begin_add();
+        app.insert_add_text("doi:世界🙂");
+        app.error = Some("translator unavailable; retry".into());
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Add reading"));
+        assert!(text.contains("Destination: Research"));
+        assert!(text.contains("URL or identifier: doi:"));
+        assert!(text.contains('世'));
+        assert!(text.contains('界'));
+        assert!(text.contains('🙂'));
+        assert!(text.contains('▌'));
+        assert!(text.contains("translator unavailable; retry"));
+        assert!(text.contains("Enter add · Esc cancel"));
+
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        app.add = Some(AddState {
+            buffer: TextBuffer::new("doi:世界🙂".into()),
+            result: Some(receiver),
+        });
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Resolving metadata…"));
+        assert!(text.contains("Adding… please wait"));
+        assert!(!text.contains("Esc cancel"));
+
+        terminal.backend_mut().resize(120, 40);
+        terminal.resize(Rect::new(0, 0, 120, 40)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Destination: Research"));
+        assert!(text.contains("Resolving metadata…"));
+        assert!(text.contains("Adding… please wait"));
     }
 
     #[test]

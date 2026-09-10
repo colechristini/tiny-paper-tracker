@@ -252,6 +252,8 @@ def tui(ctx: typer.Context):
     env["LIT_TUI_PYTHON"] = sys.executable
     env["LIT_TUI_DB"] = str(ctx.obj["config"].db)
     env["LIT_TUI_NOTES_DIR"] = str(resolved_notes_dir(ctx.obj["config"]))
+    env["LIT_TUI_TRANSLATOR_URL"] = ctx.obj["config"].translator_url
+    env["LIT_TUI_TIMEOUT"] = str(ctx.obj["config"].timeout)
     if ctx.obj["config"].vault is not None:
         env["LIT_TUI_VAULT"] = str(ctx.obj["config"].vault)
     result = subprocess.run([binary], env=env, check=False)

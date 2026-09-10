@@ -143,7 +143,18 @@ output includes `groups: [{id, name}]`. Collections are limited to roots and one
 child level.
 
 The terminal interface uses `g` and `h` to cycle forward and backward through
-the unfiltered library and groups. In the list view, `Delete` (or macOS
+the unfiltered library and groups. Press `a` to add a URL or identifier without
+leaving the TUI. Adds run in the background so the interface can redraw while
+metadata resolves; the popup remains open until the outcome is known and lets
+you correct and retry failures. The current root-group filter is the destination,
+or the item is added ungrouped from the unfiltered view.
+Press `5` for papers with registered notes and `6` for papers without registered
+notes; press the active note filter again to clear it. Note filters combine with
+the current status, group, and title search.
+After a refresh, the TUI keeps the same paper and subgroup occurrence selected
+when it remains visible. If a mutation or filter removes it, selection moves to
+the nearest surviving paper before it, or the next paper when none precedes it.
+In the list view, `Delete` (or macOS
 `Backspace`) removes the selected library item while leaving its Markdown note
 file intact. Press `F2` or uppercase `R` to rename the selected title inline;
 `Enter` saves and `Esc` cancels. Text deletion in the editor and search input

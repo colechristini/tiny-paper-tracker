@@ -130,7 +130,10 @@ def test_tui_launcher_forwards_resolved_notes_config(tmp_path, monkeypatch):
     binary.write_text("")
     monkeypatch.setenv("LIT_TUI_BINARY", str(binary))
     config = tmp_path / "settings.toml"
-    config.write_text('db = "configured.db"\nnotes_dir = "configured-notes"\n')
+    config.write_text(
+        'db = "configured.db"\nnotes_dir = "configured-notes"\n'
+        'translator_url = "https://translator.example"\ntimeout = 7.5\n'
+    )
     captured = {}
 
     def fake_run(args, env, check):
@@ -149,6 +152,8 @@ def test_tui_launcher_forwards_resolved_notes_config(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert captured["env"]["LIT_TUI_DB"] == str(tmp_path / "configured.db")
     assert captured["env"]["LIT_TUI_NOTES_DIR"] == str(tmp_path / "configured-notes")
+    assert captured["env"]["LIT_TUI_TRANSLATOR_URL"] == "https://translator.example"
+    assert captured["env"]["LIT_TUI_TIMEOUT"] == "7.5"
 
 
 def test_duplicate_can_add_tags_without_network(invoke, monkeypatch):
