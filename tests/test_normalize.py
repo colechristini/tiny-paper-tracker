@@ -111,3 +111,13 @@ def test_ipv6_url_keeps_brackets_and_whitespace_is_rejected():
     assert input_identifiers("http://[::1]:8080/path") == [("url", "http://[::1]:8080/path")]
     with pytest.raises(ValueError):
         input_identifiers("https://example.com/a b")
+
+
+def test_export_arxiv_host_deduplicates():
+    assert input_identifiers("https://export.arxiv.org/pdf/2401.12345v2.pdf") == input_identifiers(
+        "arxiv:2401.12345"
+    )
+
+
+def test_port_zero_does_not_alias_default_port():
+    assert input_identifiers("http://example.com:0/x") != input_identifiers("http://example.com/x")

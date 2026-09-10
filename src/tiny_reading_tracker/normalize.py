@@ -42,7 +42,7 @@ def _arxiv(value: str) -> str | None:
     candidate = value.strip()
     candidate = re.sub(r"^arxiv:\s*", "", candidate, flags=re.IGNORECASE)
     match = re.match(
-        r"^https?://(?:www\.)?arxiv\.org/(?:abs|pdf)/([^?#]+)", candidate, re.IGNORECASE
+        r"^https?://(?:(?:www|export)\.)?arxiv\.org/(?:abs|pdf)/([^?#]+)", candidate, re.IGNORECASE
     )
     if match:
         candidate = unquote(match.group(1))
@@ -100,7 +100,7 @@ def normalize_url(value: str) -> str:
     if ":" in host:
         host = f"[{host}]"
     port = parsed.port
-    if port and not (
+    if port is not None and not (
         (parsed.scheme.lower() == "http" and port == 80)
         or (parsed.scheme.lower() == "https" and port == 443)
     ):
