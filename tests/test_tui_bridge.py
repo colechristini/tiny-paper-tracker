@@ -41,7 +41,9 @@ def test_bridge_delete_requires_full_id_and_evicts_cached_document(tmp_path: Pat
     with Database(tmp_path / "library.db") as library:
         item, _ = library.add(ResolvedItem(title="Delete", url="https://delete", source="test"))
         documents = {item["id"]: object()}
-        rejected = _handle({"version": 1, "op": "delete_item", "id": item["id"][:10]}, library, documents)
+        rejected = _handle(
+            {"version": 1, "op": "delete_item", "id": item["id"][:10]}, library, documents
+        )
         assert not rejected["ok"]
         deleted = _handle({"version": 1, "op": "delete_item", "id": item["id"]}, library, documents)
         assert deleted["ok"] and deleted["deleted"] == item["id"]

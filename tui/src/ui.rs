@@ -101,7 +101,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     };
     let footer_rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .constraints([Constraint::Length(2), Constraint::Min(1)])
         .split(chunks[1]);
     frame.render_widget(
         Paragraph::new(status).block(Block::default().borders(Borders::TOP)),
@@ -418,9 +418,14 @@ mod tests {
     use super::{draw, sanitize};
     use crate::{
         editor::TextBuffer,
+        model::Group,
         state::{App, EditorState},
     };
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        style::{Color, Modifier},
+    };
     #[test]
     fn removes_control_chars() {
         assert_eq!(sanitize("a\u{1b}[31mb\n"), "a[31mb\n");
@@ -458,5 +463,58 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("Created: 2026-09-10T08:00:00Z"));
         assert!(rendered.contains("Edited: 2026-09-10T09:30:00Z"));
+    }
+
+    #[test]
+    fn list_footer_keeps_status_and_styled_hints_visible_at_long_group_name() {
+        let app = App {
+            groups: vec![Group {
+                id: "g".into(),
+                name: "x".repeat(500),
+            }],
+            group: Some("g".into()),
+            ..Default::default()
+        };
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("all · "));
+        assert!(text.contains("g/h"));
+        assert!(text.contains("Del delete"));
+        let key = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "g" && cell.fg == Color::Yellow)
+            .unwrap();
+        assert_eq!(key.fg, Color::Yellow);
+        assert!(key.modifier.contains(Modifier::BOLD));
+        let description = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "s" && !cell.modifier.contains(Modifier::BOLD))
+            .unwrap();
+        assert!(!description.modifier.contains(Modifier::BOLD));
+
+        let error_app = App {
+            error: Some("visible error".into()),
+            ..Default::default()
+        };
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &error_app)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Error: visible error"));
     }
 }

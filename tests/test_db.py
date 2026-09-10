@@ -114,8 +114,12 @@ def test_delete_item_cascades_memberships_and_search_but_keeps_note_file_and_sha
 ) -> None:
     with Database(tmp_path / "db.sqlite") as db:
         group = db.create_group("Keep me")
-        doomed, _ = db.add(article("Delete me", [("url", "delete")]), tags=["shared"], groups=[group["id"]])
-        survivor, _ = db.add(article("Keep me", [("url", "keep")]), tags=["shared"], groups=[group["id"]])
+        doomed, _ = db.add(
+            article("Delete me", [("url", "delete")]), tags=["shared"], groups=[group["id"]]
+        )
+        survivor, _ = db.add(
+            article("Keep me", [("url", "keep")]), tags=["shared"], groups=[group["id"]]
+        )
         note = tmp_path / "notes" / "delete-me.md"
         note.parent.mkdir()
         note.write_text("keep this file")

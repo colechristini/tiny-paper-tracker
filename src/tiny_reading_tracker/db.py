@@ -697,7 +697,10 @@ class Database:
             raise DatabaseError("item ID must be a non-empty full ID")
         try:
             self._begin()
-            if self.connection.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+            if (
+                self.connection.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
+                is None
+            ):
                 raise ItemNotFoundError(f"item not found: {item_id}")
             self.connection.execute("DELETE FROM item_search WHERE item_id = ?", (item_id,))
             self.connection.execute("DELETE FROM items WHERE id = ?", (item_id,))
