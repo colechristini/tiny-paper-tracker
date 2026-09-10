@@ -184,16 +184,24 @@ fn draw_editor(frame: &mut Frame, app: &App) {
     );
     if let Some(completion) = &editor.completion {
         let entries = if completion.candidates.is_empty() {
-            vec![Line::from("No matching titles · Tab inserts spaces")]
+            vec![Line::from(if completion.query.is_empty() {
+                "Type a title…"
+            } else {
+                "No matching titles"
+            })]
         } else {
-            completion
-                .candidates
+            let max_rows = editor_area[1].height.saturating_sub(3).max(1) as usize;
+            let offset = completion
+                .selected
+                .saturating_sub(max_rows.saturating_sub(1));
+            completion.candidates[offset..completion.candidates.len().min(offset + max_rows)]
                 .iter()
                 .enumerate()
                 .map(|(i, c)| {
+                    let actual = i + offset;
                     Line::from(format!(
                         "{}{}",
-                        if i == completion.selected {
+                        if actual == completion.selected {
                             "› "
                         } else {
                             "  "
@@ -203,7 +211,8 @@ fn draw_editor(frame: &mut Frame, app: &App) {
                 })
                 .collect()
         };
-        let popup_height = (entries.len() as u16 + 2).min(editor_area[1].height);
+        let popup_height =
+            (entries.len() as u16 + 2).min(editor_area[1].height.saturating_sub(1).max(1));
         let popup = Rect {
             x: editor_area[1].x + 1,
             y: editor_area[1].y + 1,

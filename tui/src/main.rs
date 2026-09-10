@@ -159,6 +159,7 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if ctrl && key.code == KeyCode::Char('v') {
         if let Some(editor) = app.editor.as_mut() {
+            editor.completion = None;
             editor.toggle_preview();
         }
         return;
@@ -244,6 +245,13 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
                 return;
             }
             KeyCode::Tab => {
+                let current = completion::extract(&editor.buffer);
+                if current.as_ref().map(|(s, e, q)| (*s, *e, q))
+                    != Some((completion.start, completion.end, &completion.query))
+                {
+                    editor.completion = None;
+                    return;
+                }
                 if let Some(target) = completion.candidates.get(completion.selected).cloned() {
                     let id = editor.item_id.clone();
                     match bridge.note_link(&id, &target.id) {
@@ -263,6 +271,7 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
         }
     }
     let mut changed = false;
+    let mut moved = false;
     match key.code {
         KeyCode::Char(c) if !ctrl => {
             editor.buffer.insert(&c.to_string());
@@ -282,24 +291,46 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
             editor.buffer.delete();
             changed = before != editor.buffer.text();
         }
-        KeyCode::Left => editor.buffer.left(),
-        KeyCode::Right => editor.buffer.right(),
-        KeyCode::Up => editor.buffer.up(),
-        KeyCode::Down => editor.buffer.down(),
-        KeyCode::Home => editor.buffer.home(),
-        KeyCode::End => editor.buffer.end(),
+        KeyCode::Left => {
+            editor.buffer.left();
+            moved = true;
+        }
+        KeyCode::Right => {
+            editor.buffer.right();
+            moved = true;
+        }
+        KeyCode::Up => {
+            editor.buffer.up();
+            moved = true;
+        }
+        KeyCode::Down => {
+            editor.buffer.down();
+            moved = true;
+        }
+        KeyCode::Home => {
+            editor.buffer.home();
+            moved = true;
+        }
+        KeyCode::End => {
+            editor.buffer.end();
+            moved = true;
+        }
         KeyCode::PageUp => {
             editor.buffer.page_up(10);
             editor.scroll = editor.scroll.saturating_sub(10);
+            moved = true;
         }
         KeyCode::PageDown => {
             editor.buffer.page_down(10);
             editor.scroll = editor.scroll.saturating_add(10);
+            moved = true;
         }
         _ => {}
     }
     if changed {
         editor.mark_changed();
+        update_completion(editor, bridge);
+    } else if moved {
         update_completion(editor, bridge);
     }
 }
