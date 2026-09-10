@@ -1,8 +1,9 @@
 # Tiny Reading Tracker
 
 A local reading library for papers, blogs, and other web resources. SQLite owns
-metadata and read status; your Obsidian vault owns your writing. Zotero's
-Translation Server resolves metadata without the Zotero desktop app.
+metadata and read status; notes are portable Markdown files that can be edited
+in the terminal, Obsidian, or another editor. Zotero's Translation Server
+resolves metadata without the Zotero desktop app.
 
 The current **v0.3.0.dev0** adds a Rust terminal reading list to the original
 workflow and paper groups. There is no tracker web API or browser extension. See
@@ -137,10 +138,10 @@ notes. JSON item output includes `groups: [{id, name}]`. Group names are filters
 not additional FTS search fields. Nested collections and shared group libraries
 are not implemented.
 
-Existing databases automatically migrate from schema 1 to schema 2 in a
-transaction when opened. Existing metadata, tags, notes, and reading state are
-preserved. The v0.1.0 CLI cannot open the upgraded database; retain a backup if
-you need to return to the older release.
+Existing databases automatically migrate from schema 1 or schema 2 to schema 3
+in a transaction when opened. Existing metadata, groups, tags, notes, and
+reading state are preserved. The v0.1.0 and v0.2.0 CLIs cannot open the
+upgraded database; retain a backup if you need to return to an older release.
 
 ## Ingestion and identity
 
@@ -164,14 +165,22 @@ publisher coverage varies; this does not download papers or snapshots.
 
 ## Notes and durability
 
-`lit note` creates a Markdown file with a sanitized title and stable item ID in
-the filename. Frontmatter records the item and creation time. Existing writing
-is preserved; `--text` and `--append` append, never replace. The TUI saves notes
-atomically and detects external edits before saving. If a save conflicts,
-`Ctrl-E` writes a unique recovery copy while preserving the original file.
-SQLite stores only the note path. A missing registered note is an error so the
-tool does not silently recreate a file you moved. Automatic rename detection
-and cross-device synchronization are outside v0.
+`lit note` and the TUI create flat Markdown files with a sanitized title and
+stable item ID in the filename. New files use `Summary` and `Notes` sections;
+frontmatter records the item and creation time. Existing writing is preserved,
+and the CLI append operation never replaces it. The TUI records created and
+modified timestamps, autosaves after a short idle period, saves before leaving
+the editor, and writes a recovery copy with `Ctrl-E` when a save conflict
+occurs. Atomic saves preserve file permissions and detect edits or deletion
+before replacement. Cooperative TUI/CLI writers are serialized; an editor
+that does not use the lock can still race the final check on filesystems
+without a compare-and-swap operation.
+
+SQLite stores only the note path. Registered absolute paths and legacy relative
+vault paths remain supported, while new notes can live anywhere in the flat
+configured notes directory. A missing registered note is an error so the tool
+does not silently recreate a file you moved. Automatic rename detection and
+cross-device synchronization are outside v0.3.
 
 The local SQLite database uses transactions, foreign keys, an explicit schema
 version, and WAL. For a consistent backup while other commands might run, use
@@ -181,9 +190,9 @@ SQLite's backup API or the shell's `.backup` command:
 sqlite3 ~/.local/share/tiny-reading-tracker/library.db '.backup /absolute/path/library-backup.db'
 ```
 
-Back up the Obsidian vault separately. Filesystem note writes and SQLite changes
-are not a single cross-filesystem transaction. Keep the database on a local
-filesystem, not a live shared/network database mount.
+Back up the configured notes directory separately. Filesystem note writes and
+SQLite changes are not a single cross-filesystem transaction. Keep the database
+on a local filesystem, not a live shared/network database mount.
 
 ## Agent skill
 
@@ -217,8 +226,9 @@ uv run ruff format --check .
 
 Tests isolate data and notes in temporary directories and mock translation
 responses; they do not touch your reading library. The lockfile pins Python
-dependencies. See `docs/v0-plan.md` for the agreed boundary and
-`docs/validation.md` for the actual validation results.
+dependencies. See `docs/v0-plan.md` for the agreed boundary,
+`docs/validation.md` for the historical validation results, and
+`docs/tui-validation.md` for the staged terminal interface checks.
 
 For an opt-in end-to-end check against the running server, run
 `uv run python scripts/smoke_live.py`. This performs 11 live lookups and the full
