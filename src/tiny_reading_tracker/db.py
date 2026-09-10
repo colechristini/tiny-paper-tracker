@@ -254,13 +254,21 @@ class Database:
                     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
                     PRIMARY KEY (group_id, item_id)
                 )""")
-                self.connection.execute("INSERT INTO item_groups_v4 SELECT group_id,item_id FROM item_groups")
+                self.connection.execute(
+                    "INSERT INTO item_groups_v4 SELECT group_id,item_id FROM item_groups"
+                )
                 self.connection.execute("DROP TABLE item_groups")
                 self.connection.execute("ALTER TABLE item_groups_v4 RENAME TO item_groups")
-                self.connection.execute("CREATE INDEX item_groups_item_id_idx ON item_groups(item_id)")
+                self.connection.execute(
+                    "CREATE INDEX item_groups_item_id_idx ON item_groups(item_id)"
+                )
                 self.connection.execute("DROP TABLE groups_v3")
-            self.connection.execute("CREATE INDEX IF NOT EXISTS groups_parent_idx ON groups(parent_id)")
-            self.connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS groups_root_name_idx ON groups(name_key) WHERE parent_id IS NULL")
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS groups_parent_idx ON groups(parent_id)"
+            )
+            self.connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS groups_root_name_idx ON groups(name_key) WHERE parent_id IS NULL"
+            )
             self.connection.execute("""CREATE TRIGGER IF NOT EXISTS groups_parent_is_root_insert
                 BEFORE INSERT ON groups WHEN NEW.parent_id IS NOT NULL AND
                 (NEW.parent_id = NEW.id OR (SELECT parent_id FROM groups WHERE id = NEW.parent_id) IS NOT NULL)
@@ -403,17 +411,25 @@ class Database:
         }
 
     def _group_path(self, group_id: str) -> str:
-        row = self.connection.execute("SELECT name,parent_id FROM groups WHERE id=?", (group_id,)).fetchone()
+        row = self.connection.execute(
+            "SELECT name,parent_id FROM groups WHERE id=?", (group_id,)
+        ).fetchone()
         if row is None:
             raise GroupNotFoundError(f"group not found: {group_id}")
-        return row["name"] if not row["parent_id"] else f"{self._group_path(row['parent_id'])}/{row['name']}"
+        return (
+            row["name"]
+            if not row["parent_id"]
+            else f"{self._group_path(row['parent_id'])}/{row['name']}"
+        )
 
     def _resolve_group(self, query: str) -> dict[str, Any]:
         query, name_key = _group_name(query)
         row = self.connection.execute(self._group_query() + " WHERE g.id = ?", (query,)).fetchone()
         if row is not None:
             return self._row_to_group(row)
-        rows = self.connection.execute(self._group_query() + " WHERE g.name_key = ?", (name_key,)).fetchall()
+        rows = self.connection.execute(
+            self._group_query() + " WHERE g.name_key = ?", (name_key,)
+        ).fetchall()
         if len(rows) == 1:
             return self._row_to_group(rows[0])
         if len(rows) > 1 and "/" not in query:
@@ -422,8 +438,10 @@ class Database:
         if "/" in query:
             parts = query.split("/")
             if len(parts) == 2:
+                parts = [part.strip() for part in parts]
                 row = self.connection.execute(
-                    self._group_query() + " WHERE p.name_key=? AND p.parent_id IS NULL AND g.name_key=?",
+                    self._group_query()
+                    + " WHERE p.name_key=? AND p.parent_id IS NULL AND g.name_key=?",
                     (parts[0].casefold(), parts[1].casefold()),
                 ).fetchone()
                 if row is not None:
@@ -559,8 +577,22 @@ class Database:
             group_id = self._resolve_group(query)["id"]
             normalized = self._validate_item_ids(item_ids)
             group = self._resolve_group(group_id)
-            ids = [group_id] + [r[0] for r in self.connection.execute("SELECT id FROM groups WHERE parent_id=?", (group_id,))] if group["parent_id"] is None else [group_id]
-            self.connection.executemany("DELETE FROM item_groups WHERE group_id IN (%s) AND item_id = ?" % ",".join("?" for _ in ids), ([*ids, item_id] for item_id in normalized))
+            ids = (
+                [group_id]
+                + [
+                    r[0]
+                    for r in self.connection.execute(
+                        "SELECT id FROM groups WHERE parent_id=?", (group_id,)
+                    )
+                ]
+                if group["parent_id"] is None
+                else [group_id]
+            )
+            self.connection.executemany(
+                "DELETE FROM item_groups WHERE group_id IN (%s) AND item_id = ?"
+                % ",".join("?" for _ in ids),
+                ([*ids, item_id] for item_id in normalized),
+            )
             result = self._resolve_group(group_id)
             self.connection.commit()
             return result
@@ -694,9 +726,7 @@ class Database:
             sql += " AND i.status = ?"
             parameters.append(status)
         if group_id is not None:
-            sql += (
-                " AND EXISTS (SELECT 1 FROM item_groups ig WHERE ig.item_id=i.id AND (ig.group_id=? OR ig.group_id IN (SELECT id FROM groups WHERE parent_id=?)))"
-            )
+            sql += " AND EXISTS (SELECT 1 FROM item_groups ig WHERE ig.item_id=i.id AND (ig.group_id=? OR ig.group_id IN (SELECT id FROM groups WHERE parent_id=?)))"
             parameters.extend([group_id, group_id])
         sql += " ORDER BY bm25(item_search), i.added_at DESC, i.id DESC"
         try:

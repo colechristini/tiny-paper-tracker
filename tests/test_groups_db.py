@@ -140,6 +140,65 @@ def create_v2_database(path: Path) -> None:
     connection.close()
 
 
+def create_v3_database(path: Path, orphan_membership: bool = False) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE items (
+            id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL,
+            kind TEXT NOT NULL, authors TEXT NOT NULL, venue TEXT,
+            published_at TEXT, source TEXT NOT NULL, metadata TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('unread', 'reading', 'read')),
+            added_at TEXT NOT NULL, read_at TEXT, note_path TEXT
+        );
+        CREATE TABLE identifiers (scheme TEXT NOT NULL, value TEXT NOT NULL,
+            item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            PRIMARY KEY (scheme, value));
+        CREATE TABLE tags (name TEXT PRIMARY KEY);
+        CREATE TABLE item_tags (item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            tag TEXT NOT NULL REFERENCES tags(name) ON DELETE CASCADE, PRIMARY KEY (item_id, tag));
+        CREATE VIRTUAL TABLE item_search USING fts5(item_id UNINDEXED, title, authors, venue, tags);
+        CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL);
+        CREATE TABLE item_groups (group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE, PRIMARY KEY (group_id, item_id));
+        CREATE INDEX item_groups_item_id_idx ON item_groups(item_id);
+        PRAGMA user_version = 3;
+        """
+    )
+    connection.execute(
+        "INSERT INTO items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "lit_v3",
+            "V3 Paper",
+            "https://example.test/v3",
+            "webpage",
+            json.dumps(["Author"]),
+            "Venue",
+            "2025-01-01",
+            "test",
+            json.dumps({"keep": True}),
+            "read",
+            "2025-01-01T00:00:00+00:00",
+            "2025-01-02T00:00:00+00:00",
+            "Reading/v3.md",
+        ),
+    )
+    connection.execute("INSERT INTO identifiers VALUES ('doi', 'v3', 'lit_v3')")
+    connection.execute("INSERT INTO tags VALUES ('legacy')")
+    connection.execute("INSERT INTO item_tags VALUES ('lit_v3', 'legacy')")
+    connection.execute(
+        "INSERT INTO item_search VALUES ('lit_v3', 'V3 Paper', 'Author', 'Venue', 'legacy')"
+    )
+    connection.execute("INSERT INTO groups VALUES ('grp_v3', 'Archive', 'archive', '2025-01-01')")
+    connection.execute("INSERT INTO item_groups VALUES ('grp_v3', 'lit_v3')")
+    if orphan_membership:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("INSERT INTO item_groups VALUES ('grp_missing', 'lit_v3')")
+    connection.commit()
+    connection.close()
+
+
 def test_v1_migration_preserves_all_item_state_and_fts(tmp_path: Path) -> None:
     path = tmp_path / "v1.sqlite"
     create_v1_database(path)
@@ -169,6 +228,31 @@ def test_v2_migration_preserves_groups_and_all_item_state(tmp_path: Path) -> Non
         assert item["note_path"] == "Reading/v2.md"
         assert item["groups"] == [{"id": "grp_v2", "name": "Archive"}]
         assert [found["id"] for found in db.search('"V2 Paper"')] == ["lit_v2"]
+
+
+def test_v3_migration_preserves_groups_memberships_and_fts(tmp_path: Path) -> None:
+    path = tmp_path / "v3.sqlite"
+    create_v3_database(path)
+    with Database(path) as db:
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.get_group("Archive")["id"] == "grp_v3"
+        item = db.get("lit_v3")
+        assert item["groups"] == [{"id": "grp_v3", "name": "Archive"}]
+        assert item["note_path"] == "Reading/v3.md"
+        assert item["metadata"] == {"keep": True}
+        assert [entry["id"] for entry in db.search("V3 Paper")] == ["lit_v3"]
+
+
+def test_v3_group_migration_rolls_back_on_invalid_membership(tmp_path: Path) -> None:
+    path = tmp_path / "v3-invalid.sqlite"
+    create_v3_database(path, orphan_membership=True)
+    with pytest.raises(DatabaseError, match="foreign-key validation"):
+        Database(path)
+    connection = sqlite3.connect(path)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert connection.execute("SELECT name FROM sqlite_master WHERE name='groups'").fetchone()
+    assert connection.execute("SELECT COUNT(*) FROM item_groups").fetchone()[0] == 2
+    connection.close()
 
 
 def test_v2_migration_rolls_back_on_invalid_status(tmp_path: Path) -> None:
@@ -328,6 +412,7 @@ def test_two_level_groups_lookup_membership_and_delete(tmp_path: Path) -> None:
         with pytest.raises(DatabaseError, match="ambiguous group"):
             db.get_group("Child")
         assert db.get_group("Root/Child")["id"] == child["id"]
+        assert db.get_group("Root / Child")["id"] == child["id"]
         with pytest.raises(sqlite3.IntegrityError, match="at most one parent"):
             db.connection.execute(
                 "INSERT INTO groups(id,name,name_key,parent_id,created_at) VALUES ('x','X','x',?,?)",
@@ -336,7 +421,10 @@ def test_two_level_groups_lookup_membership_and_delete(tmp_path: Path) -> None:
         first, _ = db.add(article("First", "first"), groups=[child["id"]])
         second, _ = db.add(article("Second", "second"), groups=[root["id"]])
         assert db.get_group(root["id"])["item_count"] == 2
-        assert {i["id"] for i in db.list_items(None, group=root["id"])} == {first["id"], second["id"]}
+        assert {i["id"] for i in db.list_items(None, group=root["id"])} == {
+            first["id"],
+            second["id"],
+        }
         db.remove_from_group(root["id"], [first["id"]])
         assert db.get_group(child["id"])["item_count"] == 0
         db.add_to_group(child["id"], [first["id"]])

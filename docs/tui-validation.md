@@ -72,7 +72,7 @@ uv run python scripts/smoke_tui.py --binary /Users/colechristini/.cargo/bin/lit-
 The staged work uses temporary libraries and note directories for validation.
 Markdown remains portable and independent of Obsidian. SQLite remains the
 authoritative metadata store; note contents stay in files. Schema 1 and schema
-2 databases migrate transactionally to schema 3, preserving existing metadata,
+2 and 3 databases migrate transactionally to schema 4, preserving existing metadata,
 groups, identifiers, tags, reading state, and registered note paths. Older
-release CLIs cannot open a schema 3 database after migration, so keep a backup
+release CLIs cannot open a schema 4 database after migration, so keep a backup
 when upgrading an existing library.

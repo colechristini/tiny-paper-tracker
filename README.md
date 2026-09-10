@@ -107,7 +107,7 @@ read status. `--no-note` means no registered note path, not a vault scan.
 
 ## Paper groups
 
-Groups are flat, named collections for organizing any saved resource. One item
+Groups are named collections with roots and one optional child level. One item
 can belong to multiple groups, and its read status and note remain shared across
 those groups. Tags remain independent topic labels.
 
@@ -148,7 +148,7 @@ the unfiltered library and groups. In the list view, `Delete` (or macOS
 file intact; text deletion in the editor and search input keeps its normal
 meaning.
 
-Existing databases automatically migrate from schema 1 or schema 2 to schema 3
+Existing databases automatically migrate from schema 1, 2, or 3 to schema 4
 in a transaction when opened. Existing metadata, groups, tags, notes, and
 reading state are preserved. The v0.1.0 and v0.2.0 CLIs cannot open the
 upgraded database; retain a backup if you need to return to an older release.
