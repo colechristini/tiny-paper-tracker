@@ -323,8 +323,23 @@ impl App {
         let Some(item) = self.selected_item() else {
             return;
         };
-        let mut groups = self.groups.clone();
-        groups.sort_by_key(|g| (g.parent_id.is_some(), g.name.to_lowercase()));
+        let mut groups = Vec::new();
+        let mut roots = self
+            .groups
+            .iter()
+            .filter(|g| g.parent_id.is_none())
+            .collect::<Vec<_>>();
+        roots.sort_by_key(|g| g.name.to_lowercase());
+        for root in roots {
+            groups.push(root.clone());
+            let mut children = self
+                .groups
+                .iter()
+                .filter(|g| g.parent_id.as_deref() == Some(root.id.as_str()))
+                .collect::<Vec<_>>();
+            children.sort_by_key(|g| g.name.to_lowercase());
+            groups.extend(children.into_iter().cloned());
+        }
         let choices = groups
             .iter()
             .map(|g| {
@@ -374,6 +389,7 @@ impl App {
             }
             _ => {}
         }
+        picker.scroll = picker.selected.saturating_sub(7);
     }
     pub fn cancel_membership(&mut self) {
         self.membership = None;

@@ -127,7 +127,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         );
     }
     if let Some(picker) = &app.membership {
-        let height = (picker.choices.len() as u16 + 4).min(frame.area().height.saturating_sub(2));
+        let height = (picker.choices.len() as u16 + 4)
+            .min(frame.area().height.saturating_sub(2))
+            .max(6);
         let area = centered_rect(65, height, frame.area());
         frame.render_widget(Clear, area);
         let mut lines = vec![
@@ -137,24 +139,42 @@ pub fn draw(frame: &mut Frame, app: &App) {
             )),
             Line::from("Subgroups also include this paper in their parent."),
         ];
-        lines.extend(picker.choices.iter().enumerate().map(|(i, (_, label))| {
-            Line::from(Span::styled(
-                format!("{} {}", if picker.checked[i] { "☑" } else { "☐" }, label),
-                if i == picker.selected {
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                },
-            ))
-        }));
+        let visible = height.saturating_sub(4) as usize;
+        if picker.choices.is_empty() {
+            lines.push(Line::from(
+                "No groups yet. Create groups with lit group create.",
+            ));
+        }
+        lines.extend(
+            picker
+                .choices
+                .iter()
+                .enumerate()
+                .skip(picker.scroll)
+                .take(visible)
+                .map(|(i, (_, label))| {
+                    Line::from(Span::styled(
+                        format!("{} {}", if picker.checked[i] { "☑" } else { "☐" }, label),
+                        if i == picker.selected {
+                            Style::default().add_modifier(Modifier::REVERSED)
+                        } else {
+                            Style::default()
+                        },
+                    ))
+                }),
+        );
+        if let Some(error) = &app.error {
+            lines.push(Line::from(Span::styled(
+                sanitize(error),
+                Style::default().fg(Color::Red),
+            )));
+        }
         frame.render_widget(
-            Paragraph::new(lines)
-                .scroll((picker.scroll as u16, 0))
-                .block(
-                    Block::default()
-                        .title(" Memberships (Space toggle, Enter apply, Esc cancel) ")
-                        .borders(Borders::ALL),
-                ),
+            Paragraph::new(lines).block(
+                Block::default()
+                    .title(" Memberships (Space toggle, Enter apply, Esc cancel) ")
+                    .borders(Borders::ALL),
+            ),
             area,
         );
     }
