@@ -59,6 +59,30 @@ def test_bridge_rename_item_validates_and_returns_item(tmp_path: Path) -> None:
         assert blank["ok"] is False
 
 
+def test_bridge_set_item_groups_replaces_direct_groups(tmp_path: Path) -> None:
+    with Database(tmp_path / "db.sqlite") as library:
+        root = library.create_group("Root")
+        child = library.create_group("Child", parent=root["id"])
+        item, _ = library.add(
+            ResolvedItem(
+                title="Paper", url="https://paper", source="test", identifiers=[("url", "paper")]
+            ),
+            groups=[root["id"]],
+        )
+        response = _handle(
+            {"version": 1, "op": "set_item_groups", "id": item["id"], "group_ids": [child["id"]]},
+            library,
+        )
+        assert response["ok"] is True
+        assert response["item"]["groups"] == [{"id": child["id"], "name": "Child"}]
+        invalid = _handle(
+            {"version": 1, "op": "set_item_groups", "id": item["id"], "group_ids": ["missing"]},
+            library,
+        )
+        assert invalid["ok"] is False
+        assert library.get(item["id"])["groups"] == [{"id": child["id"], "name": "Child"}]
+
+
 def test_bridge_delete_requires_full_id_and_evicts_cached_document(tmp_path: Path) -> None:
     with Database(tmp_path / "library.db") as library:
         item, _ = library.add(ResolvedItem(title="Delete", url="https://delete", source="test"))
