@@ -1,0 +1,8 @@
+# Copy to ~/.config/tiny-reading-tracker/config.toml or pass --config PATH.
+# Relative paths in this file are relative to this file's directory.
+db = "~/.local/share/tiny-reading-tracker/library.db"
+# Set this to an existing Obsidian vault before using lit note.
+# vault = "~/Documents/My Vault"
+translator_url = "http://127.0.0.1:1969"
+timeout = 20.0
+workers = 4
