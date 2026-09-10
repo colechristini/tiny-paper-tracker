@@ -84,6 +84,62 @@ def create_v1_database(path: Path) -> None:
     connection.close()
 
 
+def create_v2_database(path: Path) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE items (
+            id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL,
+            kind TEXT NOT NULL, authors TEXT NOT NULL, venue TEXT,
+            published_at TEXT, source TEXT NOT NULL, metadata TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('unread', 'read')),
+            added_at TEXT NOT NULL, read_at TEXT, note_path TEXT
+        );
+        CREATE TABLE identifiers (scheme TEXT NOT NULL, value TEXT NOT NULL,
+            item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            PRIMARY KEY (scheme, value));
+        CREATE TABLE tags (name TEXT PRIMARY KEY);
+        CREATE TABLE item_tags (item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            tag TEXT NOT NULL REFERENCES tags(name) ON DELETE CASCADE, PRIMARY KEY (item_id, tag));
+        CREATE VIRTUAL TABLE item_search USING fts5(item_id UNINDEXED, title, authors, venue, tags);
+        CREATE TABLE groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL);
+        CREATE TABLE item_groups (group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+            item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE, PRIMARY KEY (group_id, item_id));
+        CREATE INDEX item_groups_item_id_idx ON item_groups(item_id);
+        PRAGMA user_version = 2;
+        """
+    )
+    connection.execute(
+        "INSERT INTO items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "lit_v2",
+            "V2 Paper",
+            "https://example.test/v2",
+            "webpage",
+            json.dumps(["Author"]),
+            "Venue",
+            "2025-01-01",
+            "test",
+            json.dumps({"keep": "yes"}),
+            "read",
+            "2025-01-01T00:00:00+00:00",
+            "2025-01-02T00:00:00+00:00",
+            "Reading/v2.md",
+        ),
+    )
+    connection.execute("INSERT INTO identifiers VALUES ('doi', 'v2', 'lit_v2')")
+    connection.execute("INSERT INTO tags VALUES ('tag-v2')")
+    connection.execute("INSERT INTO item_tags VALUES ('lit_v2', 'tag-v2')")
+    connection.execute(
+        "INSERT INTO item_search VALUES ('lit_v2', 'V2 Paper', 'Author', 'Venue', 'tag-v2')"
+    )
+    connection.execute("INSERT INTO groups VALUES ('grp_v2', 'Archive', 'archive', '2025-01-01')")
+    connection.execute("INSERT INTO item_groups VALUES ('grp_v2', 'lit_v2')")
+    connection.commit()
+    connection.close()
+
+
 def test_v1_migration_preserves_all_item_state_and_fts(tmp_path: Path) -> None:
     path = tmp_path / "v1.sqlite"
     create_v1_database(path)
@@ -101,6 +157,37 @@ def test_v1_migration_preserves_all_item_state_and_fts(tmp_path: Path) -> None:
         assert item["groups"] == []
         assert [found["id"] for found in db.search('"Existing Paper"')] == ["lit_existing"]
         assert db.list_groups() == []
+
+
+def test_v2_migration_preserves_groups_and_all_item_state(tmp_path: Path) -> None:
+    path = tmp_path / "v2.sqlite"
+    create_v2_database(path)
+    with Database(path) as db:
+        item = db.get("lit_v2")
+        assert item["metadata"] == {"keep": "yes"}
+        assert item["tags"] == ["tag-v2"]
+        assert item["note_path"] == "Reading/v2.md"
+        assert item["groups"] == [{"id": "grp_v2", "name": "Archive"}]
+        assert [found["id"] for found in db.search('"V2 Paper"')] == ["lit_v2"]
+
+
+def test_v2_migration_rolls_back_on_invalid_status(tmp_path: Path) -> None:
+    path = tmp_path / "v2-invalid.sqlite"
+    create_v2_database(path)
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints = ON")
+    connection.execute("UPDATE items SET status = 'corrupt' WHERE id = 'lit_v2'")
+    connection.commit()
+    connection.close()
+    with pytest.raises(sqlite3.IntegrityError):
+        Database(path)
+    connection = sqlite3.connect(path)
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert (
+        connection.execute("SELECT status FROM items WHERE id = 'lit_v2'").fetchone()[0]
+        == "corrupt"
+    )
+    connection.close()
 
 
 def test_concurrent_v1_migration_is_serialized(tmp_path: Path) -> None:
