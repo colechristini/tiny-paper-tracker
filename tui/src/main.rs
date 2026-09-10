@@ -1,4 +1,5 @@
 use crossterm::{
+    cursor::Show,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -10,27 +11,46 @@ use std::io;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bridge = Bridge::spawn()?;
     enable_raw_mode()?;
+    let _terminal_guard = TerminalGuard;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let result = run(&mut bridge, &mut terminal);
-    disable_raw_mode().ok();
-    let mut stdout = io::stdout();
-    execute!(stdout, LeaveAlternateScreen).ok();
     result.map_err(Into::into)
 }
+
+struct TerminalGuard;
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, Show, LeaveAlternateScreen);
+    }
+}
+
 fn run(
     bridge: &mut Bridge,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> io::Result<()> {
     let mut app = App::default();
     app.refresh(bridge);
+    let mut redraw = true;
     while !app.should_quit {
-        terminal.draw(|f| ui::draw(f, &app))?;
+        if redraw {
+            terminal.draw(|f| ui::draw(f, &app))?;
+            redraw = false;
+        }
         if event::poll(std::time::Duration::from_millis(250))?
-            && let Event::Key(key) = event::read()?
+            && let event = event::read()?
         {
-            handle_key(&mut app, bridge, key);
+            match event {
+                Event::Key(key) => {
+                    handle_key(&mut app, bridge, key);
+                    redraw = true;
+                }
+                Event::Resize(_, _) => redraw = true,
+                _ => {}
+            }
         }
     }
     Ok(())

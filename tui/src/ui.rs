@@ -69,7 +69,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .and_then(|id| app.groups.iter().find(|g| g.id == id))
         .map(|g| g.name.as_str())
         .unwrap_or("all groups");
-    let status = if app.searching {
+    let status = if let Some(error) = &app.error {
+        format!("Error: {}", sanitize(error))
+    } else if app.searching {
         format!("Search: {}", app.search_input)
     } else {
         format!(
@@ -105,6 +107,24 @@ fn metadata(item: &Item) -> Paragraph<'static> {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(", ");
+    let abstract_text = item
+        .metadata
+        .get("abstract")
+        .or_else(|| item.metadata.get("summary"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let identifiers = item
+        .identifiers
+        .iter()
+        .filter_map(|v| {
+            Some(format!(
+                "{}: {}",
+                v.get("scheme")?.as_str()?,
+                v.get("value")?.as_str()?
+            ))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     let text = vec![
         Line::from(Span::styled(
             sanitize(&item.title),
@@ -121,8 +141,23 @@ fn metadata(item: &Item) -> Paragraph<'static> {
             "Published: {}",
             sanitize(item.published_at.as_deref().unwrap_or(""))
         )),
+        Line::from(format!(
+            "Added: {}",
+            sanitize(item.added_at.as_deref().unwrap_or(""))
+        )),
+        Line::from(format!(
+            "Read: {}",
+            sanitize(item.read_at.as_deref().unwrap_or(""))
+        )),
         Line::from(format!("Groups: {}", sanitize(&groups))),
         Line::from(format!("Tags: {}", sanitize(&item.tags.join(", ")))),
+        Line::from(format!("Identifiers: {}", sanitize(&identifiers))),
+        Line::from(format!(
+            "Note: {}",
+            sanitize(item.note_path.as_deref().unwrap_or(""))
+        )),
+        Line::from(""),
+        Line::from(sanitize(abstract_text)),
         Line::from(""),
         Line::from(sanitize(&item.url)),
     ];

@@ -16,11 +16,17 @@ pub struct Item {
     pub published_at: Option<String>,
     #[serde(default)]
     pub status: String,
+    pub added_at: Option<String>,
+    pub read_at: Option<String>,
     pub note_path: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub groups: Vec<Value>,
+    #[serde(default)]
+    pub identifiers: Vec<Value>,
+    #[serde(default)]
+    pub metadata: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

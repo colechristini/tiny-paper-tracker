@@ -120,9 +120,13 @@ mod tests {
                     venue: None,
                     published_at: None,
                     status: String::new(),
+                    added_at: None,
+                    read_at: None,
                     note_path: None,
                     tags: vec![],
                     groups: vec![],
+                    identifiers: vec![],
+                    metadata: serde_json::Value::Null,
                 })
                 .collect(),
             ..Default::default()
