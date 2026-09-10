@@ -17,6 +17,8 @@ optional note-link backend support.
 - The staged preview validation passed the Rust suite and a PTY check covering
   long paragraphs, End scrolling, preview input isolation, and clean exit.
 - Integrated Rust link completion and PTY validation remain pending.
+- Groups support one child level with `group create NAME --parent PARENT`;
+  parent filters include child memberships and the schema migrates to version 4.
 
 ## [0.2.0] — 2026-09-10
 

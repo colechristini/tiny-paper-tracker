@@ -113,6 +113,7 @@ those groups. Tags remain independent topic labels.
 
 ```sh
 lit group create "Journal Club"
+lit group create "Methods" --parent "Journal Club" # one child level
 lit group create "Attention"
 lit group ls                            # includes empty groups and total item counts
 lit add https://arxiv.org/abs/1706.03762 --group "Journal Club" --group "Attention"
@@ -127,17 +128,19 @@ lit group delete "Friday Reading"
 
 Create a group before passing `--group`; unknown groups fail before ingestion.
 Re-adding a saved URL with `--group` attaches the existing item without resetting
-its state. Group names are trimmed and case-insensitively unique; commands
-accept an exact name or full group ID. Rename preserves the ID and memberships.
+its state. Group names are trimmed and case-insensitively unique among siblings;
+commands accept an exact name, `Parent/Child` path, or full group ID. Parent
+filters include direct members and direct children. Rename preserves the ID and
+memberships.
 Item selectors use the same IDs, unique prefixes, and unambiguous title fragments
 as `lit read`. A multi-item membership operation fails without partial changes
 if any selector is invalid or ambiguous. Repeated add/remove membership is safe.
 
-Removing an item from a group keeps it in the library and other groups. Deleting
-a group removes only that group and its memberships, preserving all papers and
-notes. JSON item output includes `groups: [{id, name}]`. Group names are filters,
-not additional FTS search fields. Nested collections and shared group libraries
-are not implemented.
+Removing an item from a group keeps it in the library and other groups. Removing
+from a parent also removes its child memberships. Deleting a group removes that
+group, its children, and memberships, preserving all papers and notes. JSON item
+output includes `groups: [{id, name}]`. Collections are limited to roots and one
+child level.
 
 The terminal interface uses `g` and `h` to cycle forward and backward through
 the unfiltered library and groups. In the list view, `Delete` (or macOS

@@ -384,10 +384,11 @@ class Database:
     def _group_query(self) -> str:
         return """
             SELECT g.id, g.name, g.name_key, g.parent_id, g.created_at,
+                   CASE WHEN g.parent_id IS NULL THEN g.name ELSE p.name || '/' || g.name END AS path,
                    (SELECT COUNT(DISTINCT ig2.item_id) FROM item_groups ig2
                     WHERE ig2.group_id = g.id OR ig2.group_id IN
                       (SELECT c.id FROM groups c WHERE c.parent_id = g.id)) AS item_count
-            FROM groups AS g
+            FROM groups AS g LEFT JOIN groups AS p ON p.id = g.parent_id
         """
 
     @staticmethod
@@ -396,6 +397,7 @@ class Database:
             "id": row["id"],
             "name": row["name"],
             "parent_id": row["parent_id"],
+            "path": row["path"],
             "created_at": row["created_at"],
             "item_count": row["item_count"],
         }
@@ -421,7 +423,7 @@ class Database:
             parts = query.split("/")
             if len(parts) == 2:
                 row = self.connection.execute(
-                    self._group_query() + " JOIN groups p ON p.id=g.parent_id WHERE p.name_key=? AND p.parent_id IS NULL AND g.name_key=?",
+                    self._group_query() + " WHERE p.name_key=? AND p.parent_id IS NULL AND g.name_key=?",
                     (parts[0].casefold(), parts[1].casefold()),
                 ).fetchone()
                 if row is not None:

@@ -338,7 +338,7 @@ def note(
 
 
 def show_group(ctx, group):
-    emit(ctx, group, [f"{group['id']}  {group['name']}  ({group['item_count']} items)"])
+    emit(ctx, group, [f"{group['id']}  {group.get('path', group['name'])}  ({group['item_count']} items)"])
 
 
 @group_app.command("create")
@@ -348,7 +348,7 @@ def group_create(
     name: str,
     parent: str | None = typer.Option(None, "--parent", help="Create as a child of this root group."),
 ):
-    """Create an empty group. Names are case-insensitively unique."""
+    """Create an empty root group or a child group (at most two levels)."""
     with Database(ctx.obj["config"].db) as library:
         show_group(ctx, library.create_group(name, parent=parent))
 

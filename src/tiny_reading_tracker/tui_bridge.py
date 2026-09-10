@@ -119,9 +119,10 @@ def _list(request: dict[str, Any], library: Database) -> dict[str, Any]:
         )}
 
     visible_ids = {i["id"] for i in items}
+    title_by_id = {i["id"]: i["title"].casefold() for i in items}
     def section(title: str, ids: set[str], sid: str | None = None) -> dict[str, Any]:
         ids &= visible_ids
-        return {"id": sid, "title": title, "item_ids": sorted(ids, key=lambda x: (next((i["title"].casefold() for i in items if i["id"] == x), ""), x))}
+        return {"id": sid, "title": title, "item_ids": sorted(ids, key=lambda x: (title_by_id.get(x, ""), x))}
 
     sections: list[dict[str, Any]] = []
     if selected is not None:
@@ -134,21 +135,18 @@ def _list(request: dict[str, Any], library: Database) -> dict[str, Any]:
             sections += [section(c["name"], direct_ids(c["id"]), c["id"]) for c in children]
     elif any(g["parent_id"] is not None for g in groups):
         roots = sorted((g for g in groups if g["parent_id"] is None), key=lambda g: (g["name"].casefold(), g["id"]))
-        assigned: set[str] = set()
-        root_sections: list[dict[str, Any]] = []
+        child_sections: list[dict[str, Any]] = []
+        subgroup_assigned: set[str] = set()
         for root in roots:
             children = sorted((g for g in groups if g["parent_id"] == root["id"]), key=lambda g: (g["name"].casefold(), g["id"]))
-            root_direct = direct_ids(root["id"])
-            child_union = set().union(*(direct_ids(c["id"]) for c in children)) if children else set()
-            root_sections.append(section(root["name"], root_direct - child_union, root["id"]))
-            assigned |= root_direct | child_union
-            root_sections += [section(f"{root['name']} / {c['name']}", direct_ids(c["id"]), c["id"]) for c in children]
-        unassigned = {i["id"] for i in items} - assigned
-        if unassigned:
-            sections.append(section("", unassigned))
-        sections += root_sections
+            for child in children:
+                child_items = direct_ids(child["id"])
+                subgroup_assigned |= child_items
+                child_sections.append(section(f"{root['name']} / {child['name']}", child_items, child["id"]))
+        sections.append(section("", {i["id"] for i in items} - subgroup_assigned))
+        sections += child_sections
     else:
-        sections = [section("Reading", {i["id"] for i in items})]
+        sections = [section("", {i["id"] for i in items})]
     return _response(items=items, groups=groups, sections=sections)
 
 

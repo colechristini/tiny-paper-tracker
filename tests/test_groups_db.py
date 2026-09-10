@@ -145,7 +145,7 @@ def test_v1_migration_preserves_all_item_state_and_fts(tmp_path: Path) -> None:
     create_v1_database(path)
 
     with Database(path) as db:
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 4
         item = db.get("lit_existing")
         assert item["authors"] == ["Existing Author"]
         assert item["metadata"] == {"legacy": True}
@@ -199,13 +199,13 @@ def test_concurrent_v1_migration_is_serialized(tmp_path: Path) -> None:
             return db.connection.execute("PRAGMA user_version").fetchone()[0]
 
     with ThreadPoolExecutor(max_workers=8) as executor:
-        assert list(executor.map(open_database, range(8))) == [3] * 8
+        assert list(executor.map(open_database, range(8))) == [4] * 8
 
 
 def test_new_schema_and_future_schema_rejection(tmp_path: Path) -> None:
     path = tmp_path / "new.sqlite"
     with Database(path) as db:
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 4
         indexes = {
             row["name"]
             for row in db.connection.execute("PRAGMA index_list('item_groups')").fetchall()
@@ -213,9 +213,9 @@ def test_new_schema_and_future_schema_rejection(tmp_path: Path) -> None:
         assert "item_groups_item_id_idx" in indexes
 
     connection = sqlite3.connect(path)
-    connection.execute("PRAGMA user_version = 4")
+    connection.execute("PRAGMA user_version = 5")
     connection.close()
-    with pytest.raises(DatabaseError, match="unsupported database schema version 4"):
+    with pytest.raises(DatabaseError, match="unsupported database schema version 5"):
         Database(path)
 
 
@@ -315,3 +315,31 @@ def test_group_filters_status_dedup_and_delete_preserve_items(tmp_path: Path) ->
         assert preserved["tags"] == ["database"]
         assert preserved["groups"] == []
         assert db.get(second["id"])["title"] == "Other Systems"
+
+
+def test_two_level_groups_lookup_membership_and_delete(tmp_path: Path) -> None:
+    with Database(tmp_path / "db.sqlite") as db:
+        root = db.create_group("Root")
+        other = db.create_group("Other")
+        child = db.create_group("Child", parent=root["id"])
+        other_child = db.create_group("Child", parent=other["id"])
+        with pytest.raises(DatabaseError, match="at most one parent"):
+            db.create_group("Grandchild", parent=child["id"])
+        with pytest.raises(DatabaseError, match="ambiguous group"):
+            db.get_group("Child")
+        assert db.get_group("Root/Child")["id"] == child["id"]
+        with pytest.raises(sqlite3.IntegrityError, match="at most one parent"):
+            db.connection.execute(
+                "INSERT INTO groups(id,name,name_key,parent_id,created_at) VALUES ('x','X','x',?,?)",
+                (child["id"], "now"),
+            )
+        first, _ = db.add(article("First", "first"), groups=[child["id"]])
+        second, _ = db.add(article("Second", "second"), groups=[root["id"]])
+        assert db.get_group(root["id"])["item_count"] == 2
+        assert {i["id"] for i in db.list_items(None, group=root["id"])} == {first["id"], second["id"]}
+        db.remove_from_group(root["id"], [first["id"]])
+        assert db.get_group(child["id"])["item_count"] == 0
+        db.add_to_group(child["id"], [first["id"]])
+        db.delete_group(root["id"])
+        assert db.get(first["id"])["groups"] == []
+        assert db.get_group(other_child["id"])["name"] == "Child"
