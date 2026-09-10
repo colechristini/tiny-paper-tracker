@@ -21,7 +21,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
     if app.help {
-        let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\ng              cycle groups\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
+        let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\ng / h          next / previous group\nDelete/Backspace delete selected item\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
         frame.render_widget(
             Paragraph::new(help)
                 .block(Block::default().title(" Help ").borders(Borders::ALL))
@@ -36,7 +36,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(4), Constraint::Length(3)])
+        .constraints([Constraint::Min(4), Constraint::Length(4)])
         .split(frame.area());
     let body = Layout::default()
         .direction(Direction::Horizontal)
@@ -85,27 +85,75 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let status = if let Some(error) = &app.error {
         format!("Error: {}", sanitize(error))
     } else if app.searching {
-        format!("Search: {}", app.search_input)
+        format!("Search: {}", sanitize(&app.search_input))
     } else {
+        let query_label = if app.query.is_empty() {
+            "no search".to_string()
+        } else {
+            sanitize(&app.query)
+        };
         format!(
             "{} · {} · {}",
             filter_label(app.filter),
-            group,
-            if app.query.is_empty() {
-                "no search"
-            } else {
-                app.query.as_str()
-            }
+            sanitize(group),
+            query_label,
         )
     };
-    frame.render_widget(Paragraph::new(Line::from(vec![Span::styled(status, Style::default().fg(Color::Cyan)), Span::raw("   ↑↓/jk move  Enter edit  u/c/r status  1-4 filter  g group  / search  f refresh  ? help  q quit")])).block(Block::default().borders(Borders::TOP)), chunks[1]);
+    let footer_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(1)])
+        .split(chunks[1]);
+    frame.render_widget(
+        Paragraph::new(status).block(Block::default().borders(Borders::TOP)),
+        footer_rows[0],
+    );
+    frame.render_widget(
+        hint_footer(
+            String::new(),
+            &[
+                ("↑↓/jk", " move"),
+                ("Enter", " edit"),
+                ("u/c/r", " status"),
+                ("1-4", " filter"),
+                ("g/h", " group"),
+                ("/", " search"),
+                ("f", " refresh"),
+                ("?", " help"),
+                ("Del", " delete"),
+                ("q", " quit"),
+            ],
+        ),
+        footer_rows[1],
+    );
+}
+
+fn hint_footer<'a>(status: String, hints: &[(&'a str, &'a str)]) -> Paragraph<'a> {
+    let mut spans = vec![Span::styled(status, Style::default().fg(Color::Cyan))];
+    for (key, description) in hints {
+        spans.push(Span::raw("   "));
+        spans.push(Span::styled(
+            *key,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(*description));
+    }
+    Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true })
+}
+
+fn error_or_hints<'a>(error: Option<&str>, hints: &[(&'a str, &'a str)]) -> Paragraph<'a> {
+    match error {
+        Some(message) => Paragraph::new(sanitize(message)).wrap(Wrap { trim: true }),
+        None => hint_footer(String::new(), hints),
+    }
 }
 fn draw_editor(frame: &mut Frame, app: &App) {
     let editor = app.editor.as_ref().expect("editor checked by caller");
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
+        .constraints([Constraint::Min(3), Constraint::Length(4)])
         .split(area);
     let panes = Layout::default()
         .direction(Direction::Horizontal)
@@ -161,9 +209,19 @@ fn draw_editor(frame: &mut Frame, app: &App) {
                     .borders(Borders::ALL),
             );
         frame.render_widget(paragraph, editor_area[1]);
-        let footer = app.error.as_deref().map(sanitize).unwrap_or_else(|| "Ctrl-V edit · Ctrl-S save · Esc save and return · Ctrl-E recovery · Ctrl-Q save+quit · arrows/PageUp/PageDown scroll".to_string());
         frame.render_widget(
-            Paragraph::new(footer).block(Block::default().borders(Borders::TOP)),
+            error_or_hints(
+                app.error.as_deref(),
+                &[
+                    ("Ctrl-V", " preview/edit"),
+                    ("Ctrl-S", " save"),
+                    ("Esc", " save and return"),
+                    ("Ctrl-E", " recovery"),
+                    ("Ctrl-Q", " save+quit"),
+                    ("arrows/PageUp/PageDown", " scroll"),
+                ],
+            )
+            .block(Block::default().borders(Borders::TOP)),
             chunks[1],
         );
         return;
@@ -241,9 +299,19 @@ fn draw_editor(frame: &mut Frame, app: &App) {
             cursor_y,
         ));
     }
-    let footer = app.error.as_deref().map(sanitize).unwrap_or_else(|| "Ctrl-S save · Esc save and return · Ctrl-Q save and quit · Ctrl-E recovery copy · arrows/Home/End/PageUp/PageDown edit".to_string());
     frame.render_widget(
-        Paragraph::new(footer).block(Block::default().borders(Borders::TOP)),
+        error_or_hints(
+            app.error.as_deref(),
+            &[
+                ("Ctrl-V", " preview"),
+                ("Ctrl-S", " save"),
+                ("Esc", " save and return"),
+                ("Ctrl-Q", " save and quit"),
+                ("Ctrl-E", " recovery copy"),
+                ("arrows/Home/End/PageUp/PageDown", " edit"),
+            ],
+        )
+        .block(Block::default().borders(Borders::TOP)),
         chunks[1],
     );
 }
@@ -350,9 +418,14 @@ mod tests {
     use super::{draw, sanitize};
     use crate::{
         editor::TextBuffer,
+        model::Group,
         state::{App, EditorState},
     };
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        style::{Color, Modifier},
+    };
     #[test]
     fn removes_control_chars() {
         assert_eq!(sanitize("a\u{1b}[31mb\n"), "a[31mb\n");
@@ -390,5 +463,58 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("Created: 2026-09-10T08:00:00Z"));
         assert!(rendered.contains("Edited: 2026-09-10T09:30:00Z"));
+    }
+
+    #[test]
+    fn list_footer_keeps_status_and_styled_hints_visible_at_long_group_name() {
+        let app = App {
+            groups: vec![Group {
+                id: "g".into(),
+                name: "x".repeat(500),
+            }],
+            group: Some("g".into()),
+            ..Default::default()
+        };
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("all · "));
+        assert!(text.contains("g/h"));
+        assert!(text.contains("Del delete"));
+        let key = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "g" && cell.fg == Color::Yellow)
+            .unwrap();
+        assert_eq!(key.fg, Color::Yellow);
+        assert!(key.modifier.contains(Modifier::BOLD));
+        let description = buffer
+            .content()
+            .iter()
+            .find(|cell| cell.symbol() == "s" && !cell.modifier.contains(Modifier::BOLD))
+            .unwrap();
+        assert!(!description.modifier.contains(Modifier::BOLD));
+
+        let error_app = App {
+            error: Some("visible error".into()),
+            ..Default::default()
+        };
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &error_app)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Error: visible error"));
     }
 }

@@ -142,9 +142,14 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
             app.refresh(bridge);
         }
         KeyCode::Char('g') => {
-            app.cycle_group();
+            app.cycle_group(1);
             app.refresh(bridge);
         }
+        KeyCode::Char('h') => {
+            app.cycle_group(-1);
+            app.refresh(bridge);
+        }
+        KeyCode::Delete | KeyCode::Backspace => app.delete_selected(bridge),
         KeyCode::Char('/') => {
             app.searching = true;
             app.search_input = app.query.clone();
@@ -204,7 +209,7 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
         let width = (area.width * 62 / 100).saturating_sub(2);
         let height = area
             .height
-            .saturating_sub(3)
+            .saturating_sub(4)
             .saturating_sub(5)
             .saturating_sub(2);
         let max = editor

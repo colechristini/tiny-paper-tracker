@@ -119,17 +119,34 @@ impl App {
         self.selected = ((self.selected as i32 + delta).rem_euclid(n)) as usize;
         self.metadata_scroll = 0;
     }
-    pub fn cycle_group(&mut self) {
-        self.group = match self.group.as_deref() {
-            None => self.groups.first().map(|g| g.id.clone()),
-            Some(id) => self
-                .groups
-                .iter()
-                .position(|g| g.id == id)
-                .and_then(|i| self.groups.get(i + 1))
-                .map(|g| g.id.clone()),
-        };
+    pub fn cycle_group(&mut self, delta: i32) {
+        // Slot zero is the unfiltered view; group slots follow it. A stale ID
+        // is treated as the unfiltered slot so both directions remain safe.
+        let current = self
+            .group
+            .as_deref()
+            .and_then(|id| self.groups.iter().position(|g| g.id == id).map(|i| i + 1))
+            .unwrap_or(0) as i32;
+        let count = self.groups.len() as i32 + 1;
+        let next = (current + delta).rem_euclid(count) as usize;
+        self.group = next
+            .checked_sub(1)
+            .and_then(|i| self.groups.get(i))
+            .map(|g| g.id.clone());
         self.selected = 0;
+        self.metadata_scroll = 0;
+    }
+    pub fn delete_selected(&mut self, bridge: &mut Bridge) {
+        let Some(id) = self.selected_item().map(|item| item.id.clone()) else {
+            return;
+        };
+        match bridge.delete_item(&id) {
+            Ok(()) => {
+                self.metadata_scroll = 0;
+                self.refresh(bridge);
+            }
+            Err(e) => self.error = Some(e.to_string()),
+        }
     }
     pub fn selected_item(&self) -> Option<&Item> {
         self.items.get(self.selected)
@@ -266,5 +283,33 @@ mod tests {
     fn filter_cycles() {
         assert_eq!(StatusFilter::All.next(), StatusFilter::Unread);
         assert_eq!(StatusFilter::Read.next(), StatusFilter::All);
+    }
+
+    #[test]
+    fn group_cycles_forward_and_backward_with_all_and_stale_ids() {
+        let mut app = App {
+            groups: vec![
+                Group {
+                    id: "one".into(),
+                    name: "One".into(),
+                },
+                Group {
+                    id: "two".into(),
+                    name: "Two".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        app.cycle_group(1);
+        assert_eq!(app.group.as_deref(), Some("one"));
+        app.cycle_group(1);
+        assert_eq!(app.group.as_deref(), Some("two"));
+        app.cycle_group(1);
+        assert_eq!(app.group, None);
+        app.cycle_group(-1);
+        assert_eq!(app.group.as_deref(), Some("two"));
+        app.group = Some("stale".into());
+        app.cycle_group(-1);
+        assert_eq!(app.group.as_deref(), Some("two"));
     }
 }
