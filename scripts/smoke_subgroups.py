@@ -83,8 +83,8 @@ def run(binary: Path) -> dict[str, object]:
             screen = session.screen_text()
             if (
                 "General" in screen
-                or "Research / Empty (0)" not in screen
-                or "(empty)" not in screen
+                or "Research / Empty" in screen
+                or "(empty)" in screen
                 or "Loose" not in screen
             ):
                 raise SmokeFailure(f"unexpected subgroup layout:\n{screen}")
@@ -112,8 +112,8 @@ def run(binary: Path) -> dict[str, object]:
             session.wait_until(
                 lambda text: "EXISTING DUPLICATE NOTE" in text, "existing duplicate note"
             )
-            session.send("\x1b")
-            time.sleep(0.3)
+            session.send(b"\x1b[27u")
+            session.wait_until(lambda text: "Ctrl-V preview" not in text, "return from note")
             session.send("\x7f")
             session.wait_for_file(lambda: _missing(db, ids["Duplicate"]), "duplicate deletion")
             if not (notes / "duplicate.md").exists() or sorted(notes.glob("*.md")) != before:
@@ -121,8 +121,13 @@ def run(binary: Path) -> dict[str, object]:
             session.send("g")
             session.wait_until(lambda text: "· Research ·" in text, "root group footer")
             root_view = session.screen_text()
-            if "Alpha" not in root_view or "Beta" not in root_view or "Loose" not in root_view:
-                raise SmokeFailure("root group view omitted a child section")
+            if (
+                "Alpha" not in root_view
+                or "Beta" in root_view
+                or "Empty" in root_view
+                or "Loose" not in root_view
+            ):
+                raise SmokeFailure("root group view showed an empty or omitted a populated section")
             session.send("h")
             session.wait_until(lambda text: "all groups" in text, "return to all groups")
             session.send("q")

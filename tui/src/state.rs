@@ -80,7 +80,6 @@ pub enum NoteFilter {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DisplayRow {
     Header(Option<String>),
-    Empty,
     Item(usize),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -184,21 +183,20 @@ impl App {
             .map(|(i, item)| (item.id.as_str(), i))
             .collect::<std::collections::HashMap<_, _>>();
         for section in &self.sections {
-            let show_header = !section.title.is_empty();
-            if show_header {
+            let visible_items = section
+                .item_ids
+                .iter()
+                .filter_map(|id| index_by_id.get(id.as_str()).copied())
+                .collect::<Vec<_>>();
+            if visible_items.is_empty() {
+                continue;
+            }
+            if !section.title.is_empty() {
                 self.display_rows
                     .push(DisplayRow::Header(section.id.clone()));
             }
-            let mut count = 0;
-            for id in &section.item_ids {
-                if let Some(&index) = index_by_id.get(id.as_str()) {
-                    self.display_rows.push(DisplayRow::Item(index));
-                    count += 1;
-                }
-            }
-            if count == 0 && show_header {
-                self.display_rows.push(DisplayRow::Empty);
-            }
+            self.display_rows
+                .extend(visible_items.into_iter().map(DisplayRow::Item));
         }
     }
     fn display_occurrences(&self) -> Vec<(usize, SelectionOccurrence)> {
@@ -223,7 +221,6 @@ impl App {
         for (row, display_row) in self.display_rows.iter().enumerate() {
             match display_row {
                 DisplayRow::Header(id) => section = id.clone(),
-                DisplayRow::Empty => {}
                 DisplayRow::Item(index) => {
                     if let Some(item) = self.items.get(*index) {
                         occurrences.push((
@@ -820,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn subgroup_rows_skip_headers_and_empty_sections_and_keep_loose_item_first() {
+    fn subgroup_rows_omit_empty_sections_and_keep_loose_item_first() {
         let mut app = App {
             items: vec![item("loose"), item("child-a")],
             sections: vec![
@@ -849,8 +846,6 @@ mod tests {
                 DisplayRow::Item(0),
                 DisplayRow::Header(Some("one".into())),
                 DisplayRow::Item(1),
-                DisplayRow::Header(Some("two".into())),
-                DisplayRow::Empty,
             ]
         );
         assert_eq!(app.selected, 0);
@@ -861,6 +856,54 @@ mod tests {
         assert_eq!(app.selected, 0);
         app.move_selection(-1);
         assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn filtering_out_last_child_hides_its_section_and_selects_previous_paper() {
+        let mut app = App {
+            items: vec![item("loose"), item("child")],
+            sections: vec![
+                Section {
+                    id: None,
+                    title: String::new(),
+                    item_ids: vec!["loose".into()],
+                },
+                Section {
+                    id: Some("child-group".into()),
+                    title: "Child".into(),
+                    item_ids: vec!["child".into()],
+                },
+            ],
+            ..Default::default()
+        };
+        app.rebuild_display_rows();
+        app.selected = 2;
+        let snapshot = app.selection_snapshot();
+
+        app.items.retain(|paper| paper.id != "child");
+        app.sections[1].item_ids.clear();
+        app.rebuild_display_rows();
+        app.restore_selection(snapshot);
+
+        assert_eq!(app.display_rows, vec![DisplayRow::Item(0)]);
+        assert_eq!(app.selected_item().unwrap().id, "loose");
+    }
+
+    #[test]
+    fn no_visible_items_produce_no_section_rows() {
+        let mut app = App {
+            sections: vec![Section {
+                id: Some("empty".into()),
+                title: "Empty subgroup".into(),
+                item_ids: vec!["missing".into()],
+            }],
+            ..Default::default()
+        };
+
+        app.rebuild_display_rows();
+
+        assert!(app.display_rows.is_empty());
+        assert!(app.selected_item().is_none());
     }
 
     #[test]
