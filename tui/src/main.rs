@@ -8,8 +8,9 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use lit_tui::{bridge::Bridge, state::App, ui};
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use std::io;
+use unicode_width::UnicodeWidthStr;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bridge = Bridge::spawn()?;
@@ -48,7 +49,18 @@ fn run(
         {
             match event {
                 Event::Key(key) => {
-                    handle_key(&mut app, bridge, key);
+                    let size = terminal.size()?;
+                    handle_key(
+                        &mut app,
+                        bridge,
+                        key,
+                        Rect {
+                            x: 0,
+                            y: 0,
+                            width: size.width,
+                            height: size.height,
+                        },
+                    );
                     redraw = true;
                 }
                 Event::Paste(text) => {
@@ -68,12 +80,12 @@ fn run(
     }
     Ok(())
 }
-fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
+fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
     if key.kind == KeyEventKind::Release {
         return;
     }
     if app.editor.is_some() {
-        handle_editor_key(app, bridge, key);
+        handle_editor_key(app, bridge, key, area);
         return;
     }
     if app.help {
@@ -140,7 +152,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
     }
 }
 
-fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
+fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if ctrl && key.code == KeyCode::Char('v') {
         if let Some(editor) = app.editor.as_mut() {
@@ -173,18 +185,28 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
         return;
     };
     if editor.preview {
+        let width = (area.width * 62 / 100).saturating_sub(2);
+        let height = area
+            .height
+            .saturating_sub(3)
+            .saturating_sub(5)
+            .saturating_sub(2);
         let max = editor
             .rendered
             .as_ref()
-            .map(|text| text.lines.len().saturating_sub(1) as u16)
+            .map(|text| wrapped_lines(text, width).saturating_sub(height as usize) as u16)
             .unwrap_or(0);
         match key.code {
-            KeyCode::Up => editor.scroll = editor.scroll.saturating_sub(1),
-            KeyCode::Down => editor.scroll = editor.scroll.saturating_add(1).min(max),
-            KeyCode::PageUp => editor.scroll = editor.scroll.saturating_sub(10),
-            KeyCode::PageDown => editor.scroll = editor.scroll.saturating_add(10).min(max),
-            KeyCode::Home => editor.scroll = 0,
-            KeyCode::End => editor.scroll = max,
+            KeyCode::Up => editor.preview_scroll = editor.preview_scroll.saturating_sub(1),
+            KeyCode::Down => {
+                editor.preview_scroll = editor.preview_scroll.saturating_add(1).min(max)
+            }
+            KeyCode::PageUp => editor.preview_scroll = editor.preview_scroll.saturating_sub(10),
+            KeyCode::PageDown => {
+                editor.preview_scroll = editor.preview_scroll.saturating_add(10).min(max)
+            }
+            KeyCode::Home => editor.preview_scroll = 0,
+            KeyCode::End => editor.preview_scroll = max,
             _ => {}
         }
         return;
@@ -227,5 +249,25 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
     }
     if changed {
         editor.mark_changed();
+    }
+}
+
+fn wrapped_lines(text: &ratatui::text::Text<'static>, width: u16) -> usize {
+    let width = width.max(1) as usize;
+    text.lines
+        .iter()
+        .map(|line| line.to_string().width().max(1).div_ceil(width))
+        .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrapped_lines;
+    use ratatui::text::Text;
+    #[test]
+    fn wrapped_preview_scroll_counts_long_paragraphs() {
+        let text = Text::raw("x".repeat(2000));
+        assert!(wrapped_lines(&text, 38) > 50);
+        assert_eq!(wrapped_lines(&Text::raw("short"), 38), 1);
     }
 }

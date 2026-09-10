@@ -147,7 +147,7 @@ fn draw_editor(frame: &mut Frame, app: &App) {
         .min(line as u16)
         .max(line.saturating_sub(visible_height.saturating_sub(1)) as u16);
     if editor.preview {
-        let vscroll = editor.scroll;
+        let vscroll = editor.preview_scroll;
         let preview = editor
             .rendered
             .as_ref()
@@ -325,6 +325,7 @@ mod tests {
                 scroll: 0,
                 preview: false,
                 rendered: None,
+                preview_scroll: 0,
             }),
             ..Default::default()
         };
