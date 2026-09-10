@@ -5,8 +5,9 @@ metadata and read status; notes are portable Markdown files that can be edited
 in the terminal, Obsidian, or another editor. Zotero's Translation Server
 resolves metadata without the Zotero desktop app.
 
-The current **v0.3.0.dev0** adds a Rust terminal reading list to the original
-workflow and paper groups. There is no tracker web API or browser extension. See
+The current **v0.3.0.dev0** adds a Rust terminal reading list, portable Markdown
+notes, and staged optional note links to the original workflow and paper groups.
+There is no tracker web API or browser extension. See
 [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Quick start
@@ -63,7 +64,7 @@ lit --config ./my-settings.toml ls
 lit --db /tmp/try-lit.db --json ls --all
 ```
 
-## The six commands
+## CLI commands
 
 ```sh
 # Add URLs or DOI/arXiv/PMID/ISBN identifiers. Quote identifiers with spaces.
@@ -182,6 +183,16 @@ configured notes directory. A missing registered note is an error so the tool
 does not silently recreate a file you moved. Automatic rename detection and
 cross-device synchronization are outside v0.3.
 
+## Optional note links
+
+The optional TUI links feature searches all saved titles and uses `@title`
+completion with Tab when enabled. Selecting a target inserts a portable
+relative Markdown file link and creates the target note only when needed. Items
+in multiple groups still share one note. Link paths are URL-encoded, while
+titles escape Markdown brackets and backslashes. The feature does not add
+backlinks or a graph; see [the bridge protocol](docs/tui-links-protocol.md) for
+the wire contract. Integrated Rust completion and PTY validation are pending.
+
 The local SQLite database uses transactions, foreign keys, an explicit schema
 version, and WAL. For a consistent backup while other commands might run, use
 SQLite's backup API or the shell's `.backup` command:
@@ -232,5 +243,5 @@ dependencies. See `docs/v0-plan.md` for the agreed boundary,
 
 For an opt-in end-to-end check against the running server, run
 `uv run python scripts/smoke_live.py`. This performs 11 live lookups and the full
-six-command workflow in a temporary database/vault. Compose pins the tested
+full CLI workflow in a temporary database and notes directory. Compose pins the tested
 image digest; review and update that digest deliberately when updating Zotero.

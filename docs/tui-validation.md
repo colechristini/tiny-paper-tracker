@@ -44,10 +44,13 @@ terminal renderer does not typeset formulas or fetch remote images.
 - Stage 2 notes: 91 Python tests passed; six Rust tests passed; real PTY checks
   covered Unicode paste, autosave, external-edit conflict, recovery, and
   terminal restoration.
-- Stage 3 Markdown preview: module tests, Rust formatting, and Clippy passed
-  in the isolated renderer branch. Final integrated preview validation is
-  **pending** and should include the full Rust suite plus a PTY toggle and
-  scrolling check after the staged merge.
+- Stage 3 Markdown preview: 10 Rust library tests and 1 binary test passed;
+  formatting and Clippy passed. A real PTY check passed a long paragraph to
+  the editor, used End to reach its end, toggled preview, verified typing and
+  paste input were ignored in preview while the original text stayed intact,
+  and exited cleanly with terminal restoration.
+- Stage 4 optional links: the Python bridge protocol and backend tests are
+  complete; integrated Rust completion and PTY validation remain pending.
 
 The staged work uses temporary libraries and note directories for validation.
 Markdown remains portable and independent of Obsidian. SQLite remains the

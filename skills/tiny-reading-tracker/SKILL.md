@@ -1,11 +1,12 @@
 ---
 name: tiny-reading-tracker
-description: Save and organize papers, blogs, and other resources in the Tiny Reading Tracker SQLite library using lit; manage paper groups, search its queue, track read status, and create linked Obsidian notes. Use for Tiny Reading Tracker or lit requests and follow-ups in an established tracker workflow. Explicit Zotero-library requests use the separate reading-library workflow.
+description: Save and organize papers, blogs, and other resources in the Tiny Reading Tracker SQLite library using lit; manage paper groups, search its queue, track read status, and create portable Markdown notes. Use for Tiny Reading Tracker or lit requests and follow-ups in an established tracker workflow. Explicit Zotero-library requests use the separate reading-library workflow.
 ---
 
 # Tiny Reading Tracker
 
-SQLite owns metadata and read status; Markdown in an Obsidian vault owns notes.
+SQLite owns metadata and read status; Markdown files in the configured notes
+directory own note contents.
 Use the CLI for library changes. The Zotero Translation Server only resolves
 metadata; this workflow does not write to the Zotero desktop library.
 If a generic reading-library request has no established backend, clarify which
@@ -21,9 +22,10 @@ uv run --project /Users/colechristini/Documents/ChatGPT/tiny-reading-tracker lit
 ```
 
 Use an explicitly supplied checkout instead if the project has moved. Global
-flags (`--json`, `--config`, `--db`, `--vault`) go before the command. Honor the
-existing configuration and `LIT_CONFIG`, `LIT_DB`, `LIT_VAULT`, and
-`LIT_TRANSLATOR_URL` environment overrides; do not create a separate database
+flags (`--json`, `--config`, `--db`, `--vault`, `--notes-dir`) go before the
+command. Honor the existing configuration and `LIT_CONFIG`, `LIT_DB`,
+`LIT_VAULT`, `LIT_NOTES_DIR`, and `LIT_TRANSLATOR_URL` environment overrides;
+do not create a separate database
 per task. The default database is under
 `${XDG_DATA_HOME:-~/.local/share}/tiny-reading-tracker/library.db` and the default
 config is `${XDG_CONFIG_HOME:-~/.config}/tiny-reading-tracker/config.toml`.
@@ -42,8 +44,10 @@ lit --json add doi:10.1038/nature14539 arxiv:1706.03762 pmid:12345678 isbn:97803
 lit --json ls
 lit --json ls --all --tag attention
 lit --json ls --read --no-note
+lit --json ls --reading
 lit --json search '"linear attention"'
 lit --json search attention --read
+lit --json search attention --reading
 ```
 
 Pass a batch in one `add` call; stdin accepts one URL or identifier per line.
@@ -131,6 +135,12 @@ are not one transaction, so check both parts of an uncertain `read --note`.
 For mutations, inspect the returned item/status or note path; verify note text
 in the file after writing. Report titles and outcomes concisely, including
 individual failures and note paths when relevant.
+
+The optional TUI links workflow searches all saved titles, accepts `@title`
+completion with Tab, and inserts a portable relative Markdown file link when a
+target is selected. It creates a target note only when needed. Group membership
+does not create duplicate notes; backlinks and graph views are not part of the
+workflow.
 
 If the translator is unavailable, inspect the project's Compose service; when
 needed for an authorized save, start it with `docker compose up -d` from the
