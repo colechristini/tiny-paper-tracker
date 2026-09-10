@@ -64,7 +64,9 @@ fn run(
                     redraw = true;
                 }
                 Event::Paste(text) => {
-                    if app.editor.as_ref().is_some_and(|e| !e.preview) {
+                    if app.rename.is_some() {
+                        app.insert_rename_text(&text);
+                    } else if app.editor.as_ref().is_some_and(|e| !e.preview) {
                         app.insert_editor_text(&text);
                         if let Some(editor) = app.editor.as_mut() {
                             update_completion(editor, bridge);
@@ -89,6 +91,47 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
     }
     if app.editor.is_some() {
         handle_editor_key(app, bridge, key, area);
+        return;
+    }
+    if app.rename.is_some() {
+        match key.code {
+            KeyCode::Esc => app.cancel_rename(),
+            KeyCode::Enter => app.submit_rename(bridge),
+            KeyCode::Left => {
+                if let Some(r) = app.rename.as_mut() {
+                    r.buffer.left()
+                }
+            }
+            KeyCode::Right => {
+                if let Some(r) = app.rename.as_mut() {
+                    r.buffer.right()
+                }
+            }
+            KeyCode::Home => {
+                if let Some(r) = app.rename.as_mut() {
+                    r.buffer.home()
+                }
+            }
+            KeyCode::End => {
+                if let Some(r) = app.rename.as_mut() {
+                    r.buffer.end()
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(r) = app.rename.as_mut() {
+                    r.buffer.backspace()
+                }
+            }
+            KeyCode::Delete => {
+                if let Some(r) = app.rename.as_mut() {
+                    r.buffer.delete()
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.insert_rename_text(&c.to_string())
+            }
+            _ => {}
+        }
         return;
     }
     if app.help {
@@ -117,6 +160,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
     }
     match key.code {
         KeyCode::Enter => app.open_editor(bridge),
+        KeyCode::F(2) | KeyCode::Char('R') => app.begin_rename(),
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),

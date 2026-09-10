@@ -19,6 +19,8 @@ optional note-link backend support.
 - Integrated Rust link completion and PTY validation remain pending.
 - Groups support one child level with `group create NAME --parent PARENT`;
   parent filters include child memberships and the schema migrates to version 4.
+- The TUI supports renaming the selected paper title with `F2` or uppercase `R`;
+  titles are edited inline with Unicode-safe cursor and deletion controls.
 
 ## [0.2.0] — 2026-09-10
 

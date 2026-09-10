@@ -145,8 +145,9 @@ child level.
 The terminal interface uses `g` and `h` to cycle forward and backward through
 the unfiltered library and groups. In the list view, `Delete` (or macOS
 `Backspace`) removes the selected library item while leaving its Markdown note
-file intact; text deletion in the editor and search input keeps its normal
-meaning.
+file intact. Press `F2` or uppercase `R` to rename the selected title inline;
+`Enter` saves and `Esc` cancels. Text deletion in the editor and search input
+keeps its normal meaning.
 
 Existing databases automatically migrate from schema 1, 2, or 3 to schema 4
 in a transaction when opened. Existing metadata, groups, tags, notes, and

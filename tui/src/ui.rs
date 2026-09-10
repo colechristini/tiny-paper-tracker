@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -21,7 +21,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
     if app.help {
-        let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\ng / h          next / previous group\nDelete/Backspace delete selected item\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
+        let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\ng / h          next / previous group\nF2 / R         rename selected title\nDelete/Backspace delete selected item\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
         frame.render_widget(
             Paragraph::new(help)
                 .block(Block::default().title(" Help ").borders(Borders::ALL))
@@ -99,6 +99,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             &[
                 ("↑↓/jk", " move"),
                 ("Enter", " edit"),
+                ("F2/R", " rename"),
                 ("u/c/r", " status"),
                 ("1-4", " filter"),
                 ("g/h", " group"),
@@ -111,6 +112,44 @@ pub fn draw(frame: &mut Frame, app: &App) {
         ),
         footer_rows[1],
     );
+    if let Some(rename) = &app.rename {
+        let area = centered_rect(70, 5, frame.area());
+        frame.render_widget(Clear, area);
+        let mut input = rename.buffer.text();
+        input.insert(rename.buffer.cursor, '▌');
+        let max = area.width.saturating_sub(4) as usize;
+        if input.chars().count() > max {
+            let start = rename.buffer.cursor.saturating_sub(max.saturating_sub(1));
+            input = input.chars().skip(start).take(max).collect();
+        }
+        frame.render_widget(
+            Paragraph::new(sanitize(&input)).block(
+                Block::default()
+                    .title(" Rename title (Enter save, Esc cancel) ")
+                    .borders(Borders::ALL),
+            ),
+            area,
+        );
+    }
+}
+
+fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length((area.height.saturating_sub(height)) / 2),
+            Constraint::Length(height),
+            Constraint::Min(0),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - width_percent) / 2),
+            Constraint::Percentage(width_percent),
+            Constraint::Min(0),
+        ])
+        .split(vertical[1])[1]
 }
 
 fn hint_footer<'a>(status: String, hints: &[(&'a str, &'a str)]) -> Paragraph<'a> {
