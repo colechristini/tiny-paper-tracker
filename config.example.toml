@@ -3,6 +3,9 @@
 db = "~/.local/share/tiny-reading-tracker/library.db"
 # Set this to an existing Obsidian vault before using lit note.
 # vault = "~/Documents/My Vault"
+# Notes default to vault/Reading when vault is configured, otherwise to
+# ~/.local/share/tiny-reading-tracker/notes. Set this to keep notes elsewhere.
+# notes_dir = "~/.local/share/tiny-reading-tracker/notes"
 translator_url = "http://127.0.0.1:1969"
 timeout = 20.0
 workers = 4

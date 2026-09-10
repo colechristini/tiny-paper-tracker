@@ -19,7 +19,7 @@ from .config import Config, load_config
 from .db import Database
 from .ingest import resolve
 from .normalize import input_identifiers
-from .obsidian import write_note
+from .notes import append_note, load_note
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -65,10 +65,13 @@ def configure(
     config: Path | None = typer.Option(None, help="TOML config file (or LIT_CONFIG)."),
     db: Path | None = typer.Option(None, help="SQLite database path (or LIT_DB)."),
     vault: Path | None = typer.Option(None, help="Obsidian vault path (or LIT_VAULT)."),
+    notes_dir: Path | None = typer.Option(
+        None, "--notes-dir", help="Portable Markdown notes directory (or LIT_NOTES_DIR)."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ):
     ctx.obj = {"json": json_output}
-    ctx.obj["config"] = load_config(config, db, vault)
+    ctx.obj["config"] = load_config(config, db, vault, notes_dir)
 
 
 @app.command()
@@ -248,16 +251,35 @@ def tui(ctx: typer.Context):
     env = dict(os.environ)
     env["LIT_TUI_PYTHON"] = sys.executable
     env["LIT_TUI_DB"] = str(ctx.obj["config"].db)
+    env["LIT_TUI_NOTES_DIR"] = str(resolved_notes_dir(ctx.obj["config"]))
+    if ctx.obj["config"].vault is not None:
+        env["LIT_TUI_VAULT"] = str(ctx.obj["config"].vault)
     result = subprocess.run([binary], env=env, check=False)
     if result.returncode:
         raise typer.Exit(result.returncode)
 
 
+def resolved_notes_dir(cfg: Config) -> Path:
+    if cfg.notes_dir is not None:
+        return cfg.notes_dir
+    if cfg.vault is not None:
+        return (cfg.vault / "Reading").resolve()
+    return (
+        (Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")) / "tiny-reading-tracker/notes")
+        .expanduser()
+        .resolve()
+    )
+
+
 def make_note(library, item, cfg, text):
-    if cfg.vault is None:
-        raise ValueError("Set your Obsidian vault with --vault, LIT_VAULT, or vault in config.toml")
-    path = write_note(item, cfg.vault, text)
-    library.set_note_path(item["id"], str(path))
+    notes_dir = resolved_notes_dir(cfg)
+    if text is None:
+        note = load_note(item, notes_dir, cfg.vault)
+    else:
+        note = append_note(item, notes_dir, text, cfg.vault)
+    path = note.path
+    if not item.get("note_path"):
+        library.set_note_path(item["id"], str(path))
     return path
 
 

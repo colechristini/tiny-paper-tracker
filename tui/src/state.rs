@@ -1,7 +1,29 @@
 use crate::{
     bridge::Bridge,
+    editor::TextBuffer,
     model::{Group, Item},
 };
+use std::time::{Duration, Instant};
+
+pub struct EditorState {
+    pub item_id: String,
+    pub buffer: TextBuffer,
+    pub revision: String,
+    pub path: String,
+    pub created_at: Option<String>,
+    pub modified_at: String,
+    pub original: String,
+    pub dirty_since: Option<Instant>,
+    pub scroll: u16,
+}
+impl EditorState {
+    pub fn dirty(&self) -> bool {
+        self.buffer.text() != self.original
+    }
+    pub fn mark_changed(&mut self) {
+        self.dirty_since = Some(Instant::now());
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatusFilter {
@@ -41,6 +63,8 @@ pub struct App {
     pub error: Option<String>,
     pub should_quit: bool,
     pub help: bool,
+    pub editor: Option<EditorState>,
+    pub metadata_scroll: u16,
 }
 impl Default for App {
     fn default() -> Self {
@@ -56,6 +80,8 @@ impl Default for App {
             error: None,
             should_quit: false,
             help: false,
+            editor: None,
+            metadata_scroll: 0,
         }
     }
 }
@@ -77,6 +103,7 @@ impl App {
         }
         let n = self.items.len() as i32;
         self.selected = ((self.selected as i32 + delta).rem_euclid(n)) as usize;
+        self.metadata_scroll = 0;
     }
     pub fn cycle_group(&mut self) {
         self.group = match self.group.as_deref() {
@@ -100,6 +127,84 @@ impl App {
             } else {
                 self.refresh(bridge);
             }
+        }
+    }
+    pub fn open_editor(&mut self, bridge: &mut Bridge) {
+        let Some(id) = self.selected_item().map(|i| i.id.clone()) else {
+            return;
+        };
+        match bridge.note_open(&id) {
+            Ok(note) => {
+                self.editor = Some(EditorState {
+                    item_id: id,
+                    buffer: TextBuffer::new(note.text.clone()),
+                    revision: note.revision,
+                    path: note.path,
+                    created_at: note.created_at,
+                    modified_at: note.modified_at,
+                    original: note.text,
+                    dirty_since: None,
+                    scroll: 0,
+                })
+            }
+            Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+    pub fn save_editor(&mut self, bridge: &mut Bridge) -> Result<(), String> {
+        let Some(editor) = self.editor.as_mut() else {
+            return Ok(());
+        };
+        if !editor.dirty() {
+            editor.dirty_since = None;
+            return Ok(());
+        }
+        let text = editor.buffer.text();
+        let result = bridge.note_save(&editor.item_id, &text, &editor.revision);
+        match result {
+            Ok(note) => {
+                editor.revision = note.revision;
+                editor.path = note.path;
+                editor.created_at = note.created_at;
+                editor.modified_at = note.modified_at;
+                editor.original = text;
+                editor.dirty_since = None;
+                self.error = None;
+                Ok(())
+            }
+            Err(e) => {
+                editor.dirty_since = None;
+                let message = format!(
+                    "Save failed: {e}. Ctrl-S retries; Ctrl-E saves a recovery copy; Esc retries save."
+                );
+                self.error = Some(message);
+                Err(e.to_string())
+            }
+        }
+    }
+    pub fn autosave_due(&self) -> bool {
+        self.editor
+            .as_ref()
+            .and_then(|e| e.dirty_since)
+            .is_some_and(|t| t.elapsed() >= Duration::from_millis(750))
+    }
+    pub fn recover_editor(&mut self, bridge: &mut Bridge) {
+        let Some(editor) = self.editor.as_ref() else {
+            return;
+        };
+        let id = editor.item_id.clone();
+        let text = editor.buffer.text();
+        match bridge.note_recover(&id, &text) {
+            Ok(path) => {
+                self.editor = None;
+                self.error = Some(format!("Recovery saved: {path}"));
+            }
+            Err(e) => self.error = Some(format!("Recovery failed: {e}. Buffer retained.")),
+        }
+    }
+    pub fn insert_editor_text(&mut self, text: &str) {
+        if let Some(editor) = self.editor.as_mut() {
+            editor.buffer.insert(text);
+            editor.mark_changed();
         }
     }
 }

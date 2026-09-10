@@ -28,10 +28,11 @@ per task. The default database is under
 `${XDG_DATA_HOME:-~/.local/share}/tiny-reading-tracker/library.db` and the default
 config is `${XDG_CONFIG_HOME:-~/.config}/tiny-reading-tracker/config.toml`.
 
-For notes, use the configured existing vault. If no vault is configured or
-established by the user, ask for its path only when a note is needed. Saving and
-read-status changes do not require a vault. Configuration details and setup are
-in the checkout's `README.md`; use `lit --help` for command discovery.
+Notes use the configured `notes_dir`, `LIT_NOTES_DIR`, or the default local data
+notes directory. A vault is optional and is only needed for existing relative
+registered note paths or opening a note in Obsidian. Saving and read-status
+changes do not require a vault. Configuration details and setup are in the
+checkout's `README.md`; use `lit --help` for command discovery.
 
 ## Save and inspect
 

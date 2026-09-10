@@ -15,10 +15,14 @@ class Config:
     translator_url: str = "http://127.0.0.1:1969"
     timeout: float = 20.0
     workers: int = 4
+    notes_dir: Path | None = None
 
 
 def load_config(
-    config_path: Path | None = None, db: Path | None = None, vault: Path | None = None
+    config_path: Path | None = None,
+    db: Path | None = None,
+    vault: Path | None = None,
+    notes_dir: Path | None = None,
 ) -> Config:
     explicit = config_path is not None or bool(os.environ.get("LIT_CONFIG"))
     path = config_path or Path(
@@ -32,7 +36,7 @@ def load_config(
             data = tomllib.load(handle)
     elif explicit:
         raise ValueError(f"Config file does not exist: {path}")
-    unknown = data.keys() - {"db", "vault", "translator_url", "timeout", "workers"}
+    unknown = data.keys() - {"db", "vault", "notes_dir", "translator_url", "timeout", "workers"}
     if unknown:
         raise ValueError(f"Unknown config keys: {', '.join(sorted(unknown))}")
 
@@ -60,6 +64,20 @@ def load_config(
             / "tiny-reading-tracker/library.db"
         ),
     )
+    vault_path = configured_path("vault", vault, None)
+    configured_notes_dir = notes_dir or os.environ.get("LIT_NOTES_DIR") or data.get("notes_dir")
+    if configured_notes_dir is None:
+        if vault_path is not None:
+            configured_notes_dir = vault_path / "Reading"
+        else:
+            configured_notes_dir = (
+                Path(os.environ.get("XDG_DATA_HOME", "~/.local/share"))
+                / "tiny-reading-tracker/notes"
+            )
+        notes_path = Path(configured_notes_dir).expanduser().resolve()
+    else:
+        notes_path = configured_path("notes_dir", notes_dir, None)
+        assert notes_path is not None
     url = os.environ.get("LIT_TRANSLATOR_URL") or data.get(
         "translator_url", "http://127.0.0.1:1969"
     )
@@ -80,6 +98,4 @@ def load_config(
     if isinstance(workers, bool) or not isinstance(workers, int) or not 1 <= workers <= 16:
         raise ValueError("workers must be an integer from 1 to 16")
     assert db_path is not None
-    return Config(
-        db_path, configured_path("vault", vault, None), url.rstrip("/"), float(timeout), workers
-    )
+    return Config(db_path, vault_path, url.rstrip("/"), float(timeout), workers, notes_path)

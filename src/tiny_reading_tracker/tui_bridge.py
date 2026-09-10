@@ -6,10 +6,12 @@ import json
 import os
 import sqlite3
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
 from .db import Database, DatabaseError
+from .notes import NoteConflictError, NoteDocument, NoteError, load_note, save_note
 
 PROTOCOL_VERSION = 1
 _STATUSES = {"all", "unread", "reading", "read"}
@@ -21,6 +23,56 @@ def _response(**payload: Any) -> dict[str, Any]:
 
 def _error(message: str, kind: str = "error") -> dict[str, Any]:
     return {"version": PROTOCOL_VERSION, "ok": False, "error": {"kind": kind, "message": message}}
+
+
+def _note_payload(note: NoteDocument) -> dict[str, Any]:
+    return {
+        "path": str(note.path),
+        "text": note.content,
+        "revision": note.revision,
+        "created_at": note.created_at,
+        "modified_at": note.modified_at,
+    }
+
+
+def _notes_root() -> tuple[Path, Path | None]:
+    value = os.environ.get("LIT_TUI_NOTES_DIR")
+    if not value:
+        value = str(
+            Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")) / "tiny-reading-tracker/notes"
+        )
+    vault = os.environ.get("LIT_TUI_VAULT")
+    return Path(value), Path(vault) if vault else None
+
+
+def _write_recovery(notes_dir: Path, item_id: str, text: str) -> Path:
+    notes_dir = notes_dir.expanduser()
+    if notes_dir.exists() and notes_dir.is_symlink():
+        raise NoteError(f"notes directory must not be a symlink: {notes_dir}")
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    root = notes_dir.resolve(strict=True)
+    path = root / f"recovery-{item_id}-{uuid.uuid4().hex}.md"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            descriptor = -1
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        directory = os.open(root, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError as exc:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise NoteError(f"could not write recovery note: {exc}") from exc
+    return path
 
 
 def _list(request: dict[str, Any], library: Database) -> dict[str, Any]:
@@ -36,7 +88,13 @@ def _list(request: dict[str, Any], library: Database) -> dict[str, Any]:
     return _response(items=items, groups=library.list_groups())
 
 
-def _handle(request: dict[str, Any], library: Database) -> dict[str, Any]:
+def _handle(
+    request: dict[str, Any],
+    library: Database,
+    documents: dict[str, NoteDocument] | None = None,
+) -> dict[str, Any]:
+    if documents is None:
+        documents = {}
     if request.get("version") != PROTOCOL_VERSION:
         return _error("unsupported protocol version", "protocol")
     operation = request.get("op")
@@ -48,6 +106,51 @@ def _handle(request: dict[str, Any], library: Database) -> dict[str, Any]:
         if not isinstance(item_id, str) or not isinstance(status, str):
             return _error("set_status requires string id and status", "request")
         return _response(item=library.set_status(item_id, status))
+    if operation in {"note_open", "note_save"}:
+        item_id = request.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            return _error("note operation requires a full item ID", "request")
+        item = library.get(item_id)
+        if item["id"] != item_id:
+            return _error("note operation requires a full item ID", "request")
+        notes_dir, vault = _notes_root()
+        if operation == "note_open":
+            note = load_note(item, notes_dir, vault)
+            if not item.get("note_path"):
+                library.set_note_path(item_id, str(note.path))
+            documents.clear()
+            documents[item_id] = note
+            return _response(note=_note_payload(note))
+        note = documents.get(item_id)
+        if note is None:
+            return _error("note must be opened before saving", "request")
+        revision = request.get("revision")
+        text = request.get("text")
+        if not isinstance(revision, str) or not isinstance(text, str):
+            return _error("note_save requires string text and revision", "request")
+        if revision != note.revision:
+            return _error("note baseline is stale; reopen the note", "conflict")
+        try:
+            updated = save_note(note, text)
+        except NoteConflictError as exc:
+            return _error(str(exc), "conflict")
+        except NoteError as exc:
+            return _error(str(exc), "note")
+        documents[item_id] = updated
+        return _response(note=_note_payload(updated))
+    if operation == "note_recover":
+        item_id = request.get("id")
+        text = request.get("text")
+        if not isinstance(item_id, str) or not isinstance(text, str):
+            return _error("note_recover requires string id and text", "request")
+        item = library.get(item_id)
+        if item["id"] != item_id:
+            return _error("note operation requires a full item ID", "request")
+        try:
+            path = _write_recovery(_notes_root()[0], item_id, text)
+        except NoteError as exc:
+            return _error(str(exc), "note")
+        return _response(path=str(path))
     return _error(f"unknown operation: {operation}", "request")
 
 
@@ -58,6 +161,7 @@ def main() -> int:
         return 2
     try:
         with Database(Path(db)) as library:
+            documents: dict[str, NoteDocument] = {}
             for line in sys.stdin:
                 if not line.strip():
                     continue
@@ -65,7 +169,7 @@ def main() -> int:
                     request = json.loads(line)
                     if not isinstance(request, dict):
                         raise ValueError("request must be a JSON object")
-                    result = _handle(request, library)
+                    result = _handle(request, library, documents)
                 except (ValueError, TypeError, DatabaseError, OSError, sqlite3.Error) as exc:
                     result = _error(str(exc), "backend")
                 print(json.dumps(result, ensure_ascii=False), flush=True)

@@ -33,7 +33,7 @@ To make `lit` available outside this repository, optionally run
 
 No configuration is required for saving and tracking items. The default database
 is `~/.local/share/tiny-reading-tracker/library.db` (respects `XDG_DATA_HOME`).
-For notes, point to an **existing** Obsidian vault:
+Notes use a portable local Markdown directory by default:
 
 ```sh
 export LIT_VAULT="$HOME/Documents/My Vault"
@@ -41,13 +41,19 @@ lit note "Attention Is All You Need" --text "My takeaway…"
 lit note "Attention Is All You Need" --open
 ```
 
+Set `--notes-dir`, `LIT_NOTES_DIR`, or `notes_dir` in TOML to choose another
+directory. When a vault is configured and no notes directory is supplied,
+notes live under its `Reading/` directory. `--vault` remains optional and is
+only needed to resolve an existing relative note path or open a note in
+Obsidian.
+
 Alternatively copy `config.example.toml` to
 `~/.config/tiny-reading-tracker/config.toml` (respects `XDG_CONFIG_HOME`) and edit
 the paths. No real vault path is checked into this repository.
 
 Precedence: global CLI options > environment variables > TOML > defaults.
-Global options (`--config`, `--db`, `--vault`, `--json`) go **before** the command.
-Environment overrides: `LIT_CONFIG`, `LIT_DB`, `LIT_VAULT`, `LIT_TRANSLATOR_URL`.
+Global options (`--config`, `--db`, `--vault`, `--notes-dir`, `--json`) go **before** the command.
+Environment overrides: `LIT_CONFIG`, `LIT_DB`, `LIT_VAULT`, `LIT_NOTES_DIR`, `LIT_TRANSLATOR_URL`.
 Relative TOML paths resolve against the config directory; CLI and environment
 paths resolve against the working directory. `~` is expanded.
 
@@ -158,9 +164,11 @@ publisher coverage varies; this does not download papers or snapshots.
 
 ## Notes and durability
 
-`lit note` creates a Markdown file inside `Reading/` with a sanitized title and
-stable item ID in the filename. Frontmatter links the item to its identifiers.
-Existing writing is preserved; `--text` and `--append` append, never replace.
+`lit note` creates a Markdown file with a sanitized title and stable item ID in
+the filename. Frontmatter records the item and creation time. Existing writing
+is preserved; `--text` and `--append` append, never replace. The TUI saves notes
+atomically and detects external edits before saving. If a save conflicts,
+`Ctrl-E` writes a unique recovery copy while preserving the original file.
 SQLite stores only the note path. A missing registered note is an error so the
 tool does not silently recreate a file you moved. Automatic rename detection
 and cross-device synchronization are outside v0.

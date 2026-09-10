@@ -95,6 +95,62 @@ def test_read_note_and_no_note_filter(invoke):
     assert json.loads(invoke("ls", "--read", "--no-note").stdout) == []
 
 
+def test_note_uses_local_default_without_vault(tmp_path, monkeypatch):
+    for name in ("LIT_CONFIG", "LIT_DB", "LIT_VAULT", "LIT_NOTES_DIR", "LIT_TRANSLATOR_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+    def fake_resolve(value, translator_url, timeout):
+        return ResolvedItem(
+            title="Portable Note",
+            url=value,
+            kind="paper",
+            source="test",
+            identifiers=[("url", value)],
+        )
+
+    monkeypatch.setattr(cli, "resolve", fake_resolve)
+    result = runner.invoke(
+        cli.app,
+        ["--db", str(tmp_path / "library.db"), "--json", "add", "https://example.org/portable"],
+    )
+    item_id = json.loads(result.stdout)["results"][0]["item"]["id"]
+    noted = runner.invoke(
+        cli.app, ["--db", str(tmp_path / "library.db"), "--json", "note", item_id]
+    )
+    assert noted.exit_code == 0, noted.output
+    assert (
+        str(tmp_path / "data/tiny-reading-tracker/notes") in json.loads(noted.stdout)["note_path"]
+    )
+
+
+def test_tui_launcher_forwards_resolved_notes_config(tmp_path, monkeypatch):
+    binary = tmp_path / "lit-tui"
+    binary.write_text("")
+    monkeypatch.setenv("LIT_TUI_BINARY", str(binary))
+    config = tmp_path / "settings.toml"
+    config.write_text('db = "configured.db"\nnotes_dir = "configured-notes"\n')
+    captured = {}
+
+    def fake_run(args, env, check):
+        captured.update(args=args, env=env)
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    result = runner.invoke(
+        cli.app,
+        [
+            "--config",
+            str(config),
+            "tui",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["env"]["LIT_TUI_DB"] == str(tmp_path / "configured.db")
+    assert captured["env"]["LIT_TUI_NOTES_DIR"] == str(tmp_path / "configured-notes")
+
+
 def test_duplicate_can_add_tags_without_network(invoke, monkeypatch):
     invoke("add", "https://example.org/attention")
 
