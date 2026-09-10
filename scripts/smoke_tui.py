@@ -280,12 +280,16 @@ def run(binary: Path) -> dict[str, object]:
             if beta_path.read_text(encoding="utf-8") != before_preview:
                 raise SmokeFailure("preview mode accepted editing input")
 
-            # Return to the list, then quit from the list so the editor's
-            # save-on-Escape path and terminal restoration both run.
+            # Ctrl-Q exercises the editor's save-on-quit path and terminal
+            # restoration while the preview is still active.
             session.send(b"\x11")  # Ctrl-Q saves and quits from the editor.
             session.wait_until(
                 lambda _: session.process.poll() is not None, "clean quit", timeout=6
             )
+            if session.process.returncode != 0:
+                raise SmokeFailure(f"TUI exited with status {session.process.returncode}")
+            if beta_path.read_text(encoding="utf-8") != before_preview:
+                raise SmokeFailure("preview input changed the note before clean quit")
             if not session.terminal_restored():
                 raise SmokeFailure("terminal settings were not restored on clean quit")
             return {

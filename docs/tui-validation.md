@@ -60,10 +60,13 @@ terminal renderer does not typeset formulas or fetch remote images.
 The local 100-item idle RSS spot check measured 3,120 KiB for the Rust TUI,
 32,496 KiB for the Python parent, and 19,152 KiB for the bridge (53.5 MiB
 total). These are illustrative local measurements, not a benchmark ceiling.
-The durable smoke check remains pending:
+The durable smoke check passed against the installed binary. It covered list
+readiness, status persistence, Unicode bracketed-paste autosave, external-edit
+conflict recovery, preview input isolation before and after clean quit, the
+preview end marker, exit status, and terminal restoration:
 
 ```sh
-uv run python scripts/smoke_tui.py --binary ~/.cargo/bin/lit-tui
+uv run python scripts/smoke_tui.py --binary /Users/colechristini/.cargo/bin/lit-tui
 ```
 
 The staged work uses temporary libraries and note directories for validation.
