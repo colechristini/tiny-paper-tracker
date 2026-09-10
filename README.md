@@ -131,6 +131,27 @@ Back up the Obsidian vault separately. Filesystem note writes and SQLite changes
 are not a single cross-filesystem transaction. Keep the database on a local
 filesystem, not a live shared/network database mount.
 
+## Agent skill
+
+The repository includes `skills/tiny-reading-tracker/SKILL.md`, a personal agent
+skill for this CLI. Invoke it as `$tiny-reading-tracker`, for example:
+“Use $tiny-reading-tracker to save these links and tag them attention.” It keeps
+this SQLite library separate from the existing Zotero `reading-library` skill.
+
+To install on this machine, link the skill folder into your personal skill
+directory (run from this checkout; an existing destination is not replaced):
+
+```sh
+mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills"
+skill_target="${CODEX_HOME:-$HOME/.codex}/skills/tiny-reading-tracker"
+test ! -e "$skill_target" && test ! -L "$skill_target" && \
+  ln -s "$PWD/skills/tiny-reading-tracker" "$skill_target"
+```
+
+The skill records this checkout's local path. Update that path if you move the
+repository. Its instructions use `uv run --project` so no global `lit` install
+is needed.
+
 ## Development
 
 ```sh
