@@ -12,6 +12,14 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 pub fn draw(frame: &mut Frame, app: &App) {
+    if frame.area().width < 60 || frame.area().height < 12 {
+        frame.render_widget(
+            Paragraph::new("Terminal too small for lit-tui. Resize to at least 60x12.")
+                .block(Block::default().borders(Borders::ALL)),
+            frame.area(),
+        );
+        return;
+    }
     if app.help {
         let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\ng              cycle groups\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
         frame.render_widget(
@@ -118,7 +126,7 @@ fn draw_editor(frame: &mut Frame, app: &App) {
     frame.render_stateful_widget(list, panes[0], &mut list_state(app));
     let editor_area = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(1)])
+        .constraints([Constraint::Length(5), Constraint::Min(1)])
         .split(panes[1]);
     let header = format!(
         "{}\nCreated: {}\nEdited: {}{}",
@@ -287,16 +295,25 @@ mod tests {
                 buffer: TextBuffer::new("世界\nlong line 🙂\n".into()),
                 revision: "r".into(),
                 path: "note.md".into(),
-                created_at: Some("Created".into()),
-                modified_at: "Edited".into(),
+                created_at: Some("2026-09-10T08:00:00Z".into()),
+                modified_at: "2026-09-10T09:30:00Z".into(),
                 original: String::new(),
                 dirty_since: None,
                 scroll: 0,
             }),
             ..Default::default()
         };
-        let backend = TestBackend::new(30, 10);
+        let backend = TestBackend::new(80, 16);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Created: 2026-09-10T08:00:00Z"));
+        assert!(rendered.contains("Edited: 2026-09-10T09:30:00Z"));
     }
 }
