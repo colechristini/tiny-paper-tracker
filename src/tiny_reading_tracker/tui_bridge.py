@@ -131,6 +131,16 @@ def _handle(
         if not isinstance(item_id, str) or not isinstance(status, str):
             return _error("set_status requires string id and status", "request")
         return _response(item=library.set_status(item_id, status))
+    if operation == "delete_item":
+        item_id = request.get("id")
+        if not isinstance(item_id, str) or not item_id:
+            return _error("delete_item requires a full item ID", "request")
+        try:
+            library.delete_item(item_id)
+        except DatabaseError as exc:
+            return _error(str(exc), "request")
+        documents.pop(item_id, None)
+        return _response(deleted=item_id)
     if operation == "link_search":
         return _link_search(request, library)
     if operation in {"note_open", "note_save"}:

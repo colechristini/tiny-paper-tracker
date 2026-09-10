@@ -109,6 +109,28 @@ def test_filters_fts_status_and_read_timestamp_semantics(tmp_path: Path) -> None
             db.search('"unterminated')
 
 
+def test_delete_item_cascades_memberships_and_search_but_keeps_note_file_and_shared_data(
+    tmp_path: Path,
+) -> None:
+    with Database(tmp_path / "db.sqlite") as db:
+        group = db.create_group("Keep me")
+        doomed, _ = db.add(article("Delete me", [("url", "delete")]), tags=["shared"], groups=[group["id"]])
+        survivor, _ = db.add(article("Keep me", [("url", "keep")]), tags=["shared"], groups=[group["id"]])
+        note = tmp_path / "notes" / "delete-me.md"
+        note.parent.mkdir()
+        note.write_text("keep this file")
+        db.set_note_path(doomed["id"], note)
+        db.delete_item(doomed["id"])
+        assert not db.search("Delete")
+        assert db.get(survivor["id"])["tags"] == ["shared"]
+        assert db.get_group(group["id"])["item_count"] == 1
+        assert note.read_text() == "keep this file"
+        with pytest.raises(ItemNotFoundError):
+            db.delete_item(doomed["id"])
+        with pytest.raises(ItemNotFoundError):
+            db.delete_item(doomed["id"][:10])
+
+
 def test_get_resolution_and_ambiguity(tmp_path: Path) -> None:
     with Database(tmp_path / "db.sqlite") as db:
         first, _ = db.add(article("A Shared Subject", [("url", "one")]))

@@ -691,6 +691,22 @@ class Database:
             raise ItemNotFoundError(f"item not found: {item_id}")
         return self._get_id(item_id)
 
+    def delete_item(self, item_id: str) -> None:
+        """Delete one item by its exact full ID, retaining notes and shared records."""
+        if not isinstance(item_id, str) or not item_id:
+            raise DatabaseError("item ID must be a non-empty full ID")
+        try:
+            self._begin()
+            if self.connection.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+                raise ItemNotFoundError(f"item not found: {item_id}")
+            self.connection.execute("DELETE FROM item_search WHERE item_id = ?", (item_id,))
+            self.connection.execute("DELETE FROM items WHERE id = ?", (item_id,))
+            self.connection.commit()
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+
     def set_note_path(self, item_id: str, path: str | Path) -> dict[str, Any]:
         self._get_id(item_id)
         value = str(path)

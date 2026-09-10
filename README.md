@@ -139,6 +139,12 @@ notes. JSON item output includes `groups: [{id, name}]`. Group names are filters
 not additional FTS search fields. Nested collections and shared group libraries
 are not implemented.
 
+The terminal interface uses `g` and `h` to cycle forward and backward through
+the unfiltered library and groups. In the list view, `Delete` (or macOS
+`Backspace`) removes the selected library item while leaving its Markdown note
+file intact; text deletion in the editor and search input keeps its normal
+meaning.
+
 Existing databases automatically migrate from schema 1 or schema 2 to schema 3
 in a transaction when opened. Existing metadata, groups, tags, notes, and
 reading state are preserved. The v0.1.0 and v0.2.0 CLIs cannot open the

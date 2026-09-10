@@ -52,6 +52,12 @@ struct StatusRequest<'a> {
     status: &'a str,
 }
 #[derive(Debug, Serialize)]
+struct DeleteRequest<'a> {
+    version: u64,
+    op: &'static str,
+    id: &'a str,
+}
+#[derive(Debug, Serialize)]
 struct NoteOpenRequest<'a> {
     version: u64,
     op: &'static str,
@@ -213,6 +219,26 @@ impl Bridge {
         response
             .item
             .ok_or_else(|| BridgeError::Backend("backend returned no item".into()))
+    }
+    pub fn delete_item(&mut self, id: &str) -> Result<(), BridgeError> {
+        let response: serde_json::Value = self.request(&DeleteRequest {
+            version: VERSION,
+            op: "delete_item",
+            id,
+        })?;
+        if !response
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(BridgeError::Backend(
+                response["error"]["message"]
+                    .as_str()
+                    .unwrap_or("delete failed")
+                    .into(),
+            ));
+        }
+        Ok(())
     }
     pub fn note_open(&mut self, id: &str) -> Result<NoteSnapshot, BridgeError> {
         self.note_request(&NoteOpenRequest {

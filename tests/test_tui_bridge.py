@@ -37,6 +37,17 @@ def test_bridge_rejects_unknown_protocol_operation(tmp_path: Path) -> None:
         assert response["error"]["kind"] == "protocol"
 
 
+def test_bridge_delete_requires_full_id_and_evicts_cached_document(tmp_path: Path) -> None:
+    with Database(tmp_path / "library.db") as library:
+        item, _ = library.add(ResolvedItem(title="Delete", url="https://delete", source="test"))
+        documents = {item["id"]: object()}
+        rejected = _handle({"version": 1, "op": "delete_item", "id": item["id"][:10]}, library, documents)
+        assert not rejected["ok"]
+        deleted = _handle({"version": 1, "op": "delete_item", "id": item["id"]}, library, documents)
+        assert deleted["ok"] and deleted["deleted"] == item["id"]
+        assert item["id"] not in documents
+
+
 def test_bridge_note_open_save_and_conflict(tmp_path: Path, monkeypatch) -> None:
     notes_dir = tmp_path / "notes"
     monkeypatch.setenv("LIT_TUI_NOTES_DIR", str(notes_dir))
