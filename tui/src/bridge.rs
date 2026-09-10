@@ -65,6 +65,13 @@ struct RenameRequest<'a> {
     title: &'a str,
 }
 #[derive(Debug, Serialize)]
+struct GroupsRequest<'a> {
+    version: u64,
+    op: &'static str,
+    id: &'a str,
+    group_ids: &'a [String],
+}
+#[derive(Debug, Serialize)]
 struct NoteOpenRequest<'a> {
     version: u64,
     op: &'static str,
@@ -263,6 +270,25 @@ impl Bridge {
             op: "rename_item",
             id,
             title,
+        })?;
+        if !response.ok {
+            return Err(BridgeError::Backend(
+                response
+                    .error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "backend request failed".into()),
+            ));
+        }
+        response
+            .item
+            .ok_or_else(|| BridgeError::Backend("backend returned no item".into()))
+    }
+    pub fn set_item_groups(&mut self, id: &str, group_ids: &[String]) -> Result<Item, BridgeError> {
+        let response: MutationResponse = self.request(&GroupsRequest {
+            version: VERSION,
+            op: "set_item_groups",
+            id,
+            group_ids,
         })?;
         if !response.ok {
             return Err(BridgeError::Backend(

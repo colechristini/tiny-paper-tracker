@@ -148,6 +148,8 @@ the unfiltered library and groups. In the list view, `Delete` (or macOS
 file intact. Press `F2` or uppercase `R` to rename the selected title inline;
 `Enter` saves and `Esc` cancels. Text deletion in the editor and search input
 keeps its normal meaning.
+Press `m` in list mode to edit direct group memberships; inherited subgroup
+membership is shown by the group hierarchy and is not implicitly selected.
 
 Existing databases automatically migrate from schema 1, 2, or 3 to schema 4
 in a transaction when opened. Existing metadata, groups, tags, notes, and

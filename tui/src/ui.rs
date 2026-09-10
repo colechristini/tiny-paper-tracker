@@ -21,7 +21,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
     if app.help {
-        let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\ng / h          next / previous group\nF2 / R         rename selected title\nDelete/Backspace delete selected item\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
+        let help = "lit-tui stage 1\n\n↑/↓ or j/k   move selection\nu              mark unread\nc              mark currently reading\nr              mark read\n1-4            status filter\ng / h          next / previous group\nF2 / R         rename selected title\nm              edit memberships\nDelete/Backspace delete selected item\n/              search titles\nf              refresh\nq or Esc       quit / close help\n\nPress ? or Esc to close this help.";
         frame.render_widget(
             Paragraph::new(help)
                 .block(Block::default().title(" Help ").borders(Borders::ALL))
@@ -100,6 +100,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 ("↑↓/jk", " move"),
                 ("Enter", " edit"),
                 ("F2/R", " rename"),
+                ("m", " memberships"),
                 ("u/c/r", " status"),
                 ("1-4", " filter"),
                 ("g/h", " group"),
@@ -122,6 +123,38 @@ pub fn draw(frame: &mut Frame, app: &App) {
                     .title(" Rename title (Enter save, Esc cancel) ")
                     .borders(Borders::ALL),
             ),
+            area,
+        );
+    }
+    if let Some(picker) = &app.membership {
+        let height = (picker.choices.len() as u16 + 4).min(frame.area().height.saturating_sub(2));
+        let area = centered_rect(65, height, frame.area());
+        frame.render_widget(Clear, area);
+        let mut lines = vec![
+            Line::from(Span::styled(
+                "Direct memberships",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from("Subgroups also include this paper in their parent."),
+        ];
+        lines.extend(picker.choices.iter().enumerate().map(|(i, (_, label))| {
+            Line::from(Span::styled(
+                format!("{} {}", if picker.checked[i] { "☑" } else { "☐" }, label),
+                if i == picker.selected {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                },
+            ))
+        }));
+        frame.render_widget(
+            Paragraph::new(lines)
+                .scroll((picker.scroll as u16, 0))
+                .block(
+                    Block::default()
+                        .title(" Memberships (Space toggle, Enter apply, Esc cancel) ")
+                        .borders(Borders::ALL),
+                ),
             area,
         );
     }

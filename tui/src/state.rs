@@ -25,6 +25,13 @@ pub struct RenameState {
     pub item_id: String,
     pub buffer: TextBuffer,
 }
+pub struct MembershipState {
+    pub item_id: String,
+    pub choices: Vec<(String, String)>,
+    pub checked: Vec<bool>,
+    pub selected: usize,
+    pub scroll: usize,
+}
 impl EditorState {
     pub fn dirty(&self) -> bool {
         self.buffer.text() != self.original
@@ -92,6 +99,7 @@ pub struct App {
     pub help: bool,
     pub editor: Option<EditorState>,
     pub rename: Option<RenameState>,
+    pub membership: Option<MembershipState>,
     pub metadata_scroll: u16,
 }
 impl Default for App {
@@ -112,6 +120,7 @@ impl Default for App {
             help: false,
             editor: None,
             rename: None,
+            membership: None,
             metadata_scroll: 0,
         }
     }
@@ -304,6 +313,86 @@ impl App {
         match bridge.rename_item(&id, &title) {
             Ok(_) => {
                 self.rename = None;
+                self.error = None;
+                self.refresh(bridge);
+            }
+            Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+    pub fn begin_membership(&mut self) {
+        let Some(item) = self.selected_item() else {
+            return;
+        };
+        let mut groups = self.groups.clone();
+        groups.sort_by_key(|g| (g.parent_id.is_some(), g.name.to_lowercase()));
+        let choices = groups
+            .iter()
+            .map(|g| {
+                let label = if let Some(pid) = &g.parent_id {
+                    let parent = groups
+                        .iter()
+                        .find(|p| p.id == *pid)
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("");
+                    format!("  {parent}/{}", g.name)
+                } else {
+                    g.name.clone()
+                };
+                (g.id.clone(), label)
+            })
+            .collect::<Vec<_>>();
+        let checked = choices
+            .iter()
+            .map(|(id, _)| {
+                item.groups
+                    .iter()
+                    .any(|v| v.get("id").and_then(|x| x.as_str()) == Some(id))
+            })
+            .collect();
+        self.membership = Some(MembershipState {
+            item_id: item.id.clone(),
+            choices,
+            checked,
+            selected: 0,
+            scroll: 0,
+        });
+        self.error = None;
+    }
+    pub fn membership_key(&mut self, key: crossterm::event::KeyCode) {
+        let Some(picker) = self.membership.as_mut() else {
+            return;
+        };
+        match key {
+            crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                picker.selected = picker.selected.saturating_sub(1)
+            }
+            crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                picker.selected = (picker.selected + 1).min(picker.choices.len().saturating_sub(1))
+            }
+            crossterm::event::KeyCode::Char(' ') if !picker.choices.is_empty() => {
+                picker.checked[picker.selected] = !picker.checked[picker.selected];
+            }
+            _ => {}
+        }
+    }
+    pub fn cancel_membership(&mut self) {
+        self.membership = None;
+        self.error = None;
+    }
+    pub fn submit_membership(&mut self, bridge: &mut Bridge) {
+        let Some(picker) = self.membership.as_ref() else {
+            return;
+        };
+        let id = picker.item_id.clone();
+        let ids = picker
+            .choices
+            .iter()
+            .zip(&picker.checked)
+            .filter_map(|((gid, _), checked)| checked.then_some(gid.clone()))
+            .collect::<Vec<_>>();
+        match bridge.set_item_groups(&id, &ids) {
+            Ok(_) => {
+                self.membership = None;
                 self.error = None;
                 self.refresh(bridge);
             }

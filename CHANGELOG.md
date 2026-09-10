@@ -21,6 +21,8 @@ optional note-link backend support.
   parent filters include child memberships and the schema migrates to version 4.
 - The TUI supports renaming the selected paper title with `F2` or uppercase `R`;
   titles are edited inline with Unicode-safe cursor and deletion controls.
+- The list view supports editing direct paper memberships with `m`, including
+  root and child group checkboxes.
 
 ## [0.2.0] — 2026-09-10
 

@@ -93,6 +93,14 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         handle_editor_key(app, bridge, key, area);
         return;
     }
+    if app.membership.is_some() {
+        match key.code {
+            KeyCode::Esc => app.cancel_membership(),
+            KeyCode::Enter => app.submit_membership(bridge),
+            _ => app.membership_key(key.code),
+        }
+        return;
+    }
     if app.rename.is_some() {
         match key.code {
             KeyCode::Esc => app.cancel_rename(),
@@ -161,6 +169,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
     match key.code {
         KeyCode::Enter => app.open_editor(bridge),
         KeyCode::F(2) | KeyCode::Char('R') => app.begin_rename(),
+        KeyCode::Char('m') => app.begin_membership(),
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
