@@ -58,6 +58,13 @@ struct DeleteRequest<'a> {
     id: &'a str,
 }
 #[derive(Debug, Serialize)]
+struct RenameRequest<'a> {
+    version: u64,
+    op: &'static str,
+    id: &'a str,
+    title: &'a str,
+}
+#[derive(Debug, Serialize)]
 struct NoteOpenRequest<'a> {
     version: u64,
     op: &'static str,
@@ -249,6 +256,25 @@ impl Bridge {
             ));
         }
         Ok(())
+    }
+    pub fn rename_item(&mut self, id: &str, title: &str) -> Result<Item, BridgeError> {
+        let response: MutationResponse = self.request(&RenameRequest {
+            version: VERSION,
+            op: "rename_item",
+            id,
+            title,
+        })?;
+        if !response.ok {
+            return Err(BridgeError::Backend(
+                response
+                    .error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "backend request failed".into()),
+            ));
+        }
+        response
+            .item
+            .ok_or_else(|| BridgeError::Backend("backend returned no item".into()))
     }
     pub fn note_open(&mut self, id: &str) -> Result<NoteSnapshot, BridgeError> {
         self.note_request(&NoteOpenRequest {

@@ -33,8 +33,30 @@ def test_bridge_lists_title_sorted_and_mutates_status(tmp_path: Path) -> None:
 def test_bridge_rejects_unknown_protocol_operation(tmp_path: Path) -> None:
     with Database(tmp_path / "library.db") as library:
         response = _handle({"version": 99, "op": "list"}, library, {})
-        assert response["ok"] is False
-        assert response["error"]["kind"] == "protocol"
+    assert response["ok"] is False
+    assert response["error"]["kind"] == "protocol"
+
+
+def test_bridge_rename_item_validates_and_returns_item(tmp_path: Path) -> None:
+    with Database(tmp_path / "db.sqlite") as library:
+        item, _ = library.add(
+            ResolvedItem(
+                title="Before", url="https://before", source="test", identifiers=[("url", "before")]
+            )
+        )
+        response = _handle(
+            {"version": 1, "op": "rename_item", "id": item["id"], "title": "After"}, library
+        )
+        assert response["ok"] is True
+        assert response["item"]["title"] == "After"
+        invalid = _handle(
+            {"version": 1, "op": "rename_item", "id": item["id"][:8], "title": "Nope"}, library
+        )
+        assert invalid["ok"] is False
+        blank = _handle(
+            {"version": 1, "op": "rename_item", "id": item["id"], "title": " "}, library
+        )
+        assert blank["ok"] is False
 
 
 def test_bridge_delete_requires_full_id_and_evicts_cached_document(tmp_path: Path) -> None:

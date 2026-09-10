@@ -21,6 +21,10 @@ pub struct EditorState {
     pub preview_scroll: u16,
     pub completion: Option<Completion>,
 }
+pub struct RenameState {
+    pub item_id: String,
+    pub buffer: TextBuffer,
+}
 impl EditorState {
     pub fn dirty(&self) -> bool {
         self.buffer.text() != self.original
@@ -87,6 +91,7 @@ pub struct App {
     pub should_quit: bool,
     pub help: bool,
     pub editor: Option<EditorState>,
+    pub rename: Option<RenameState>,
     pub metadata_scroll: u16,
 }
 impl Default for App {
@@ -106,6 +111,7 @@ impl Default for App {
             should_quit: false,
             help: false,
             editor: None,
+            rename: None,
             metadata_scroll: 0,
         }
     }
@@ -259,6 +265,46 @@ impl App {
         match bridge.delete_item(&id) {
             Ok(()) => {
                 self.metadata_scroll = 0;
+                self.refresh(bridge);
+            }
+            Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+    pub fn begin_rename(&mut self) {
+        let Some(item) = self.selected_item() else {
+            return;
+        };
+        let mut buffer = TextBuffer::new(item.title.clone());
+        buffer.end();
+        self.rename = Some(RenameState {
+            item_id: item.id.clone(),
+            buffer,
+        });
+        self.error = None;
+    }
+    pub fn cancel_rename(&mut self) {
+        self.rename = None;
+        self.error = None;
+    }
+    pub fn insert_rename_text(&mut self, text: &str) {
+        if let Some(rename) = self.rename.as_mut() {
+            rename.buffer.insert(&text.replace(['\r', '\n'], " "));
+        }
+    }
+    pub fn submit_rename(&mut self, bridge: &mut Bridge) {
+        let Some(rename) = self.rename.as_ref() else {
+            return;
+        };
+        let title = rename.buffer.text().trim().to_string();
+        if title.is_empty() {
+            self.error = Some("Title cannot be blank".into());
+            return;
+        }
+        let id = rename.item_id.clone();
+        match bridge.rename_item(&id, &title) {
+            Ok(_) => {
+                self.rename = None;
+                self.error = None;
                 self.refresh(bridge);
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -554,5 +600,20 @@ mod tests {
         assert_eq!(app.group.as_deref(), Some("root"));
         app.cycle_group(1);
         assert_eq!(app.group, None);
+    }
+
+    #[test]
+    fn rename_buffer_is_prefilled_and_single_line() {
+        let mut app = App {
+            items: vec![item("x")],
+            ..Default::default()
+        };
+        app.begin_rename();
+        assert_eq!(app.rename.as_ref().unwrap().buffer.text(), "Paper x");
+        assert_eq!(app.rename.as_ref().unwrap().buffer.cursor, 7);
+        app.insert_rename_text(" 新\n題");
+        assert_eq!(app.rename.as_ref().unwrap().buffer.text(), "Paper x 新 題");
+        app.cancel_rename();
+        assert!(app.rename.is_none());
     }
 }
