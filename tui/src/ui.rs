@@ -9,7 +9,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn draw(frame: &mut Frame, app: &App) {
     if frame.area().width < 60 || frame.area().height < 12 {
@@ -115,15 +115,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some(rename) = &app.rename {
         let area = centered_rect(70, 5, frame.area());
         frame.render_widget(Clear, area);
-        let mut input = rename.buffer.text();
-        input.insert(rename.buffer.cursor, '▌');
         let max = area.width.saturating_sub(4) as usize;
-        if input.chars().count() > max {
-            let start = rename.buffer.cursor.saturating_sub(max.saturating_sub(1));
-            input = input.chars().skip(start).take(max).collect();
-        }
         frame.render_widget(
-            Paragraph::new(sanitize(&input)).block(
+            Paragraph::new(rename_input(&rename.buffer, max)).block(
                 Block::default()
                     .title(" Rename title (Enter save, Esc cancel) ")
                     .borders(Borders::ALL),
@@ -131,6 +125,27 @@ pub fn draw(frame: &mut Frame, app: &App) {
             area,
         );
     }
+}
+
+fn rename_input(buffer: &crate::editor::TextBuffer, max_width: usize) -> String {
+    let mut tokens = buffer
+        .text()
+        .chars()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>();
+    let cursor = buffer.cursor.min(tokens.len());
+    tokens.insert(cursor, "▌".into());
+    let width = |text: &str| text.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>();
+    let mut start = 0;
+    let mut end = tokens.len();
+    while start < end && tokens[start..end].iter().map(|s| width(s)).sum::<usize>() > max_width {
+        if start < cursor {
+            start += 1;
+        } else {
+            end -= 1;
+        }
+    }
+    tokens[start..end].concat()
 }
 
 fn centered_rect(width_percent: u16, height: u16, area: Rect) -> Rect {
@@ -480,7 +495,7 @@ pub fn sanitize(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{draw, sanitize};
+    use super::{draw, rename_input, sanitize};
     use crate::{
         editor::TextBuffer,
         model::Group,
@@ -493,6 +508,7 @@ mod tests {
         backend::TestBackend,
         style::{Color, Modifier},
     };
+    use unicode_width::UnicodeWidthStr;
     #[test]
     fn removes_control_chars() {
         assert_eq!(sanitize("a\u{1b}[31mb\n"), "a[31mb\n");
@@ -640,5 +656,18 @@ mod tests {
         assert!(text.contains("Child (0)"));
         assert!(text.contains("(empty)"));
         assert!(!text.contains("General"));
+    }
+
+    #[test]
+    fn rename_input_handles_unicode_carets_and_wide_clipping() {
+        let mut buffer = TextBuffer::new("世界é".into());
+        buffer.cursor = 1;
+        assert_eq!(rename_input(&buffer, 20), "世▌界é");
+        buffer.end();
+        assert_eq!(rename_input(&buffer, 20), "世界é▌");
+        let long = TextBuffer::new("世界世界世界世界".into());
+        let rendered = rename_input(&long, 8);
+        assert!(rendered.contains('▌'));
+        assert!(rendered.width() <= 8);
     }
 }
