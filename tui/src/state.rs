@@ -15,6 +15,9 @@ pub struct EditorState {
     pub original: String,
     pub dirty_since: Option<Instant>,
     pub scroll: u16,
+    pub preview: bool,
+    pub rendered: Option<ratatui::text::Text<'static>>,
+    pub preview_scroll: u16,
 }
 impl EditorState {
     pub fn dirty(&self) -> bool {
@@ -22,6 +25,14 @@ impl EditorState {
     }
     pub fn mark_changed(&mut self) {
         self.dirty_since = Some(Instant::now());
+        self.rendered = None;
+    }
+    pub fn toggle_preview(&mut self) {
+        self.preview = !self.preview;
+        if self.preview {
+            self.rendered = Some(crate::markdown::render(&self.buffer.text()));
+            self.preview_scroll = 0;
+        }
     }
 }
 
@@ -145,6 +156,9 @@ impl App {
                     original: note.text,
                     dirty_since: None,
                     scroll: 0,
+                    preview: false,
+                    rendered: None,
+                    preview_scroll: 0,
                 })
             }
             Err(e) => self.error = Some(e.to_string()),
