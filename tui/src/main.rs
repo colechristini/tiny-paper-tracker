@@ -10,7 +10,6 @@ use crossterm::{
 use lit_tui::{bridge::Bridge, state::App, ui};
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use std::io;
-use unicode_width::UnicodeWidthStr;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bridge = Bridge::spawn()?;
@@ -253,11 +252,9 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
 }
 
 fn wrapped_lines(text: &ratatui::text::Text<'static>, width: u16) -> usize {
-    let width = width.max(1) as usize;
-    text.lines
-        .iter()
-        .map(|line| line.to_string().width().max(1).div_ceil(width))
-        .sum()
+    ratatui::widgets::Paragraph::new(text.clone())
+        .wrap(ratatui::widgets::Wrap { trim: true })
+        .line_count(width.max(1))
 }
 
 #[cfg(test)]
@@ -269,5 +266,6 @@ mod tests {
         let text = Text::raw("x".repeat(2000));
         assert!(wrapped_lines(&text, 38) > 50);
         assert_eq!(wrapped_lines(&Text::raw("short"), 38), 1);
+        assert_eq!(wrapped_lines(&Text::raw("123456 123456 123456"), 10), 3);
     }
 }
