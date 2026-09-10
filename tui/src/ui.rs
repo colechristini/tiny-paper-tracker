@@ -42,21 +42,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
         .split(chunks[0]);
-    let list_items = app
-        .items
-        .iter()
-        .map(|item| {
-            let marker = match item.status.as_str() {
-                "read" => "✓",
-                "reading" => "▸",
-                _ => "·",
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{marker} "), Style::default().fg(Color::DarkGray)),
-                Span::raw(sanitize(&item.title)),
-            ]))
-        })
-        .collect::<Vec<_>>();
+    let list_items = list_rows(app, false);
     let list = List::new(list_items)
         .block(
             Block::default()
@@ -159,11 +145,7 @@ fn draw_editor(frame: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
         .split(chunks[0]);
-    let list_items = app
-        .items
-        .iter()
-        .map(|item| ListItem::new(sanitize(&item.title)))
-        .collect::<Vec<_>>();
+    let list_items = list_rows(app, true);
     let list = List::new(list_items)
         .block(
             Block::default()
@@ -317,10 +299,58 @@ fn draw_editor(frame: &mut Frame, app: &App) {
 }
 fn list_state(app: &App) -> ratatui::widgets::ListState {
     let mut state = ratatui::widgets::ListState::default();
-    if !app.items.is_empty() {
+    if !app.display_rows.is_empty() {
         state.select(Some(app.selected));
     }
     state
+}
+
+fn list_rows(app: &App, editor: bool) -> Vec<ListItem<'static>> {
+    app.display_rows
+        .iter()
+        .map(|row| match row {
+            crate::state::DisplayRow::Header(id) => {
+                let section = app.sections.iter().find(|s| s.id == *id);
+                let title = section
+                    .map(|s| sanitize(&s.title))
+                    .unwrap_or_else(|| "Reading".into());
+                let count = section
+                    .map(|s| {
+                        s.item_ids
+                            .iter()
+                            .filter(|id| app.items.iter().any(|i| &i.id == *id))
+                            .count()
+                    })
+                    .unwrap_or(app.items.len());
+                ListItem::new(Line::from(Span::styled(
+                    format!("── {} ({count}) ──", title),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )))
+            }
+            crate::state::DisplayRow::Empty => ListItem::new(Span::styled(
+                "(empty)",
+                Style::default().fg(Color::DarkGray),
+            )),
+            crate::state::DisplayRow::Item(index) => {
+                let item = &app.items[*index];
+                if editor {
+                    ListItem::new(sanitize(&item.title))
+                } else {
+                    let marker = match item.status.as_str() {
+                        "read" => "✓",
+                        "reading" => "▸",
+                        _ => "·",
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{marker} "), Style::default().fg(Color::DarkGray)),
+                        Span::raw(sanitize(&item.title)),
+                    ]))
+                }
+            }
+        })
+        .collect()
 }
 fn metadata(item: &Item, scroll: u16) -> Paragraph<'static> {
     let authors = if item.authors.is_empty() {
@@ -471,6 +501,7 @@ mod tests {
             groups: vec![Group {
                 id: "g".into(),
                 name: "x".repeat(500),
+                parent_id: None,
             }],
             group: Some("g".into()),
             ..Default::default()
