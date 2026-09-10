@@ -4,8 +4,8 @@ A local reading library for papers, blogs, and other web resources. SQLite owns
 metadata and read status; your Obsidian vault owns your writing. Zotero's
 Translation Server resolves metadata without the Zotero desktop app.
 
-The published **v0.2.0** provides the original six-command workflow plus flat
-paper groups. There is no tracker web API or browser extension. See
+The current **v0.3.0.dev0** adds a Rust terminal reading list to the original
+workflow and paper groups. There is no tracker web API or browser extension. See
 [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Quick start
@@ -14,9 +14,11 @@ Requires Python 3.11+, [uv](https://docs.astral.sh/uv/), and a running Docker en
 
 ```sh
 uv sync --locked
+cargo install --path tui --locked
 docker compose up -d
 uv run lit add https://arxiv.org/abs/1706.03762 https://example.com
 uv run lit ls
+uv run lit tui
 uv run lit read "Attention Is All You Need"
 ```
 
@@ -65,12 +67,14 @@ cat urls.txt | lit add
 
 lit ls                               # unread queue
 lit ls --read
+lit ls --reading                     # currently-reading queue
 lit ls --all --tag ml --type paper
 lit ls --read --no-note
 
 lit read "Attention Is All You Need"  # full ID, unique prefix, or title fragment
 lit read lit_ID1 lit_ID2
 lit unread "Attention Is All You Need"
+lit reading "Attention Is All You Need" # currently reading
 lit read "Attention Is All You Need" --note "My main takeaway…"
 
 lit note "Attention Is All You Need"   # create or return note path
@@ -79,6 +83,7 @@ lit note "Attention Is All You Need" --open
 
 lit search attention                 # searches all statuses
 lit search '"linear attention"' --read
+lit search attention --reading
 lit --json search attention           # machine-readable output
 ```
 

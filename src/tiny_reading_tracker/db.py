@@ -12,8 +12,8 @@ from typing import Any, Self
 
 from .models import ResolvedItem
 
-SCHEMA_VERSION = 2
-VALID_STATUSES = {"unread", "read"}
+SCHEMA_VERSION = 3
+VALID_STATUSES = {"unread", "reading", "read"}
 
 
 class DatabaseError(ValueError):
@@ -129,14 +129,19 @@ class Database:
 
     def _create_schema(self) -> None:
         try:
+            # The v2 -> v3 table rebuild changes a CHECK constraint. Foreign-key
+            # enforcement is restored before returning and checked by SQLite on
+            # every subsequent write.
+            self.connection.execute("PRAGMA foreign_keys = OFF")
             self._begin()
             version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, SCHEMA_VERSION):
+            if version not in (0, 1, 2, SCHEMA_VERSION):
                 raise DatabaseError(
                     f"unsupported database schema version {version}; expected {SCHEMA_VERSION}"
                 )
             if version == SCHEMA_VERSION:
                 self.connection.commit()
+                self.connection.execute("PRAGMA foreign_keys = ON")
                 return
             if version == 0:
                 self.connection.execute("""
@@ -150,7 +155,7 @@ class Database:
                 published_at TEXT,
                 source TEXT NOT NULL,
                 metadata TEXT NOT NULL,
-                status TEXT NOT NULL CHECK (status IN ('unread', 'read')),
+                status TEXT NOT NULL CHECK (status IN ('unread', 'reading', 'read')),
                 added_at TEXT NOT NULL,
                 read_at TEXT,
                 note_path TEXT
@@ -200,11 +205,42 @@ class Database:
                 self.connection.execute(
                     "CREATE INDEX item_groups_item_id_idx ON item_groups(item_id)"
                 )
+            if version in (1, 2):
+                # SQLite cannot add a value to an existing CHECK constraint. Rebuild
+                # only the small items table while preserving every row and field.
+                self.connection.execute("""
+                CREATE TABLE items_v3 (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                authors TEXT NOT NULL,
+                venue TEXT,
+                published_at TEXT,
+                source TEXT NOT NULL,
+                metadata TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('unread', 'reading', 'read')),
+                added_at TEXT NOT NULL,
+                read_at TEXT,
+                note_path TEXT
+                )
+                """)
+                self.connection.execute("""
+                INSERT INTO items_v3 SELECT id, title, url, kind, authors, venue,
+                    published_at, source, metadata, status, added_at, read_at, note_path
+                    FROM items
+                """)
+                self.connection.execute("DROP TABLE items")
+                self.connection.execute("ALTER TABLE items_v3 RENAME TO items")
+                if list(self.connection.execute("PRAGMA foreign_key_check")):
+                    raise DatabaseError("database migration failed foreign-key validation")
             self.connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self.connection.commit()
+            self.connection.execute("PRAGMA foreign_keys = ON")
         except Exception:
             if self.connection.in_transaction:
                 self.connection.rollback()
+            self.connection.execute("PRAGMA foreign_keys = ON")
             raise
 
     def _begin(self) -> None:
@@ -642,6 +678,10 @@ class Database:
             cursor = self.connection.execute(
                 "UPDATE items SET status = 'read', read_at = COALESCE(read_at, ?) WHERE id = ?",
                 (_now(), item_id),
+            )
+        elif status == "reading":
+            cursor = self.connection.execute(
+                "UPDATE items SET status = 'reading', read_at = NULL WHERE id = ?", (item_id,)
             )
         else:
             cursor = self.connection.execute(

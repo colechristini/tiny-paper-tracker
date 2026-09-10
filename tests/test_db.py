@@ -48,7 +48,7 @@ def test_schema_durability_and_context_close(tmp_path: Path) -> None:
 
     with Database(path) as reopened:
         assert reopened.get(saved["id"])["title"] == "Practical SQLite"
-        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 3
         assert reopened.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert reopened.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
@@ -98,6 +98,9 @@ def test_filters_fts_status_and_read_timestamp_semantics(tmp_path: Path) -> None
         marked_again = db.set_status(first["id"], "read")
         assert marked_again["read_at"] == marked["read_at"]
         assert db.search("SQLite", status="unread") == []
+        reading = db.set_status(first["id"], "reading")
+        assert reading["status"] == "reading"
+        assert reading["read_at"] is None
         unread = db.set_status(first["id"], "unread")
         assert unread["read_at"] is None
         with pytest.raises(DatabaseError):

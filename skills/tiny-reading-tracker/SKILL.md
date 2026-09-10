@@ -102,16 +102,17 @@ Resolve the ambiguity before changing state.
 
 ```sh
 lit --json read FULL_ITEM_ID
+lit --json reading FULL_ITEM_ID
 lit --json unread FULL_ITEM_ID
 lit --json note FULL_ITEM_ID --text 'The user’s takeaway.'
 lit --json note FULL_ITEM_ID --append 'Another thought.'
 lit --json read FULL_ITEM_ID --note 'The user’s takeaway.'
 ```
 
-Only mark read when the user's request establishes that they read it. Saving,
+Use `reading` for resources currently in progress. Mark read only when the user's request establishes that they finished it. Saving,
 summarizing, or writing a note does not imply reading. To save something the user
 has already read, add it first and mark the returned ID read. Repeated `read`
-preserves its timestamp; `unread` clears it. V0 has no `reading` state command.
+preserves its timestamp; `unread` clears it.
 
 Notes are optional. `note` without text creates or returns a Markdown path;
 `--text` and `--append` both append and never replace. `read --note` accepts one
