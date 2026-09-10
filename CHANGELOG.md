@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.4.0] — 2026-09-10
 
 - Add URLs and identifiers from the list with `a`; metadata resolution runs in a
   responsive background worker and uses the active root group as its destination.
@@ -56,3 +56,4 @@ named collections.
 
 [0.2.0]: https://github.com/colechristini/tiny-paper-tracker/releases/tag/v0.2.0
 [0.3.0]: https://github.com/colechristini/tiny-paper-tracker/releases/tag/v0.3.0
+[0.4.0]: https://github.com/colechristini/tiny-paper-tracker/releases/tag/v0.4.0

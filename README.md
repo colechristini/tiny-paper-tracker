@@ -5,8 +5,8 @@ metadata and read status; notes are portable Markdown files that can be edited
 in the terminal, Obsidian, or another editor. Zotero's Translation Server
 resolves metadata without the Zotero desktop app.
 
-The current **v0.3.0** adds a Rust terminal interface, portable Markdown notes
-with preview and paper links, and two-level groups with subgroups.
+The current **v0.4.0** adds reading directly from the terminal, note filters,
+and selection fixes to the Rust interface, portable Markdown notes, and subgroups.
 There is no tracker web API or browser extension. See
 [CHANGELOG.md](CHANGELOG.md) for release notes.
 
