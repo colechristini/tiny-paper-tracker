@@ -488,7 +488,15 @@ fn list_rows(app: &App, editor: bool) -> Vec<ListItem<'static>> {
                 let title = section
                     .map(|s| sanitize(&s.title))
                     .unwrap_or_else(|| "Reading".into());
-                let count = section.map(|s| s.item_ids.len()).unwrap_or(app.items.len());
+                let count = section
+                    .map(|section| {
+                        section
+                            .item_ids
+                            .iter()
+                            .filter(|id| app.items.iter().any(|item| item.id == id.as_str()))
+                            .count()
+                    })
+                    .unwrap_or(app.items.len());
                 ListItem::new(Line::from(Span::styled(
                     format!("── {} ({count}) ──", title),
                     Style::default()
@@ -496,10 +504,6 @@ fn list_rows(app: &App, editor: bool) -> Vec<ListItem<'static>> {
                         .add_modifier(Modifier::BOLD),
                 )))
             }
-            crate::state::DisplayRow::Empty => ListItem::new(Span::styled(
-                "(empty)",
-                Style::default().fg(Color::DarkGray),
-            )),
             crate::state::DisplayRow::Item(index) => {
                 let item = &app.items[*index];
                 if editor {
@@ -747,7 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn stacked_sections_render_headers_counts_and_empty_marker() {
+    fn stacked_sections_render_populated_headers_and_omit_empty_sections() {
         let item = Item {
             id: "loose".into(),
             title: "Loose paper".into(),
@@ -779,11 +783,7 @@ mod tests {
                     item_ids: vec![],
                 },
             ],
-            display_rows: vec![
-                DisplayRow::Item(0),
-                DisplayRow::Header(Some("child".into())),
-                DisplayRow::Empty,
-            ],
+            display_rows: vec![DisplayRow::Item(0)],
             ..Default::default()
         };
         let backend = TestBackend::new(80, 16);
@@ -797,9 +797,31 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(text.contains("Loose paper"));
-        assert!(text.contains("Child (0)"));
-        assert!(text.contains("(empty)"));
+        assert!(!text.contains("Child"));
+        assert!(!text.contains("(empty)"));
         assert!(!text.contains("General"));
+        assert!(text.contains("Metadata"));
+    }
+
+    #[test]
+    fn no_items_render_guidance_without_empty_subgroup_headers() {
+        let app = App {
+            sections: vec![Section {
+                id: Some("empty".into()),
+                title: "Empty subgroup".into(),
+                item_ids: vec![],
+            }],
+            ..Default::default()
+        };
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("No items match the current filters."));
+        assert!(!text.contains("Empty subgroup"));
+        assert!(!text.contains("(empty)"));
     }
 
     #[test]

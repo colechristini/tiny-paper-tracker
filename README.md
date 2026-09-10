@@ -154,6 +154,8 @@ the current status, group, and title search.
 After a refresh, the TUI keeps the same paper and subgroup occurrence selected
 when it remains visible. If a mutation or filter removes it, selection moves to
 the nearest surviving paper before it, or the next paper when none precedes it.
+Subgroup headings appear only when that subgroup has papers visible under the
+current filters; empty subgroups remain available in the membership picker.
 In the list view, `Delete` (or macOS
 `Backspace`) removes the selected library item while leaving its Markdown note
 file intact. Press `F2` or uppercase `R` to rename the selected title inline;

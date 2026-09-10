@@ -8,6 +8,8 @@
   and `6`, while retaining status, group, and title filters.
 - List refreshes preserve the same paper and section when possible, then choose
   the nearest surviving paper when a mutation or filter removes it.
+- Empty subgroup headings are hidden from filtered reading lists while all
+  groups remain available in the membership picker.
 
 ## [0.3.0] — 2026-09-10
 
