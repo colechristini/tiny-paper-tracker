@@ -1,6 +1,9 @@
 use crossterm::{
     cursor::Show,
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -13,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let _terminal_guard = TerminalGuard;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let result = run(&mut bridge, &mut terminal);
     result.map_err(Into::into)
@@ -24,7 +27,7 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, Show, LeaveAlternateScreen);
+        let _ = execute!(stdout, Show, DisableBracketedPaste, LeaveAlternateScreen);
     }
 }
 
@@ -48,15 +51,27 @@ fn run(
                     handle_key(&mut app, bridge, key);
                     redraw = true;
                 }
+                Event::Paste(text) => {
+                    app.insert_editor_text(&text);
+                    redraw = true;
+                }
                 Event::Resize(_, _) => redraw = true,
                 _ => {}
             }
+        }
+        if app.autosave_due() {
+            let _ = app.save_editor(bridge);
+            redraw = true;
         }
     }
     Ok(())
 }
 fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
     if key.kind == KeyEventKind::Release {
+        return;
+    }
+    if app.editor.is_some() {
+        handle_editor_key(app, bridge, key);
         return;
     }
     if app.help {
@@ -84,6 +99,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
         return;
     }
     match key.code {
+        KeyCode::Enter => app.open_editor(bridge),
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
@@ -117,5 +133,72 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
         KeyCode::Char('?') => app.help = true,
         KeyCode::Char('f') => app.refresh(bridge),
         _ => {}
+    }
+}
+
+fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    if ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('r')) {
+        let _ = app.save_editor(bridge);
+        return;
+    }
+    if ctrl && key.code == KeyCode::Char('e') {
+        app.recover_editor(bridge);
+        return;
+    }
+    if ctrl && key.code == KeyCode::Char('q') {
+        if app.save_editor(bridge).is_ok() {
+            app.should_quit = true;
+        }
+        return;
+    }
+    if key.code == KeyCode::Esc {
+        if app.save_editor(bridge).is_ok() {
+            app.editor = None;
+            app.error = None;
+        }
+        return;
+    }
+    let Some(editor) = app.editor.as_mut() else {
+        return;
+    };
+    let mut changed = false;
+    match key.code {
+        KeyCode::Char(c) if !ctrl => {
+            editor.buffer.insert(&c.to_string());
+            changed = true;
+        }
+        KeyCode::Enter => {
+            editor.buffer.insert("\n");
+            changed = true;
+        }
+        KeyCode::Backspace => {
+            let before = editor.buffer.text();
+            editor.buffer.backspace();
+            changed = before != editor.buffer.text();
+        }
+        KeyCode::Delete => {
+            let before = editor.buffer.text();
+            editor.buffer.delete();
+            changed = before != editor.buffer.text();
+        }
+        KeyCode::Left => editor.buffer.left(),
+        KeyCode::Right => editor.buffer.right(),
+        KeyCode::Up => editor.buffer.up(),
+        KeyCode::Down => editor.buffer.down(),
+        KeyCode::Home => editor.buffer.home(),
+        KeyCode::End => editor.buffer.end(),
+        KeyCode::PageUp => {
+            editor.buffer.page_up(10);
+            editor.scroll = editor.scroll.saturating_sub(10);
+        }
+        KeyCode::PageDown => {
+            editor.buffer.page_down(10);
+            editor.scroll = editor.scroll.saturating_add(10);
+        }
+        _ => {}
+    }
+    if changed {
+        editor.mark_changed();
     }
 }

@@ -60,6 +60,15 @@ pub struct ErrorBody {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct NoteSnapshot {
+    pub path: String,
+    pub text: String,
+    pub revision: String,
+    pub created_at: Option<String>,
+    pub modified_at: String,
+}
+
 pub fn group_name(group: &Value) -> String {
     group
         .get("name")

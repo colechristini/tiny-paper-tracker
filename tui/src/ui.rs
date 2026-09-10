@@ -9,6 +9,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     if app.help {
@@ -19,6 +20,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 .wrap(Wrap { trim: true }),
             frame.area(),
         );
+        return;
+    }
+    if app.editor.is_some() {
+        draw_editor(frame, app);
         return;
     }
     let chunks = Layout::default()
@@ -86,6 +91,78 @@ pub fn draw(frame: &mut Frame, app: &App) {
         )
     };
     frame.render_widget(Paragraph::new(Line::from(vec![Span::styled(status, Style::default().fg(Color::Cyan)), Span::raw("   ↑↓/jk move  u/c/r status  1-4 filter  g group  / search  f refresh  ? help  q quit")])).block(Block::default().borders(Borders::TOP)), chunks[1]);
+}
+fn draw_editor(frame: &mut Frame, app: &App) {
+    let editor = app.editor.as_ref().expect("editor checked by caller");
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .split(area);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .split(chunks[0]);
+    let list_items = app
+        .items
+        .iter()
+        .map(|item| ListItem::new(sanitize(&item.title)))
+        .collect::<Vec<_>>();
+    let list = List::new(list_items)
+        .block(
+            Block::default()
+                .title(format!(" Reading ({}) ", app.items.len()))
+                .borders(Borders::ALL),
+        )
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+    frame.render_stateful_widget(list, panes[0], &mut list_state(app));
+    let editor_area = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(1)])
+        .split(panes[1]);
+    let header = format!(
+        "{}\n{} · {}{}",
+        sanitize(&editor.path),
+        editor.created_at.as_deref().unwrap_or("created unknown"),
+        editor.modified_at,
+        if editor.dirty() { " · unsaved" } else { "" }
+    );
+    frame.render_widget(
+        Paragraph::new(header).block(Block::default().title(" Note ").borders(Borders::ALL)),
+        editor_area[0],
+    );
+    let text = editor.buffer.text();
+    let lines = text
+        .split('\n')
+        .map(sanitize)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let inner_width = editor_area[1].width.saturating_sub(2) as usize;
+    let visual_col = editor.buffer.line_prefix().width();
+    let hscroll = visual_col.saturating_sub(inner_width.saturating_sub(1));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .scroll((editor.scroll, hscroll as u16))
+            .block(Block::default().borders(Borders::ALL)),
+        editor_area[1],
+    );
+    let (line, _) = editor.buffer.line_col();
+    let cursor_y = editor_area[1]
+        .y
+        .saturating_add(1)
+        .saturating_add(line as u16)
+        .saturating_sub(editor.scroll);
+    if cursor_y < editor_area[1].bottom().saturating_sub(1) {
+        frame.set_cursor_position((
+            editor_area[1].x + 1 + visual_col.saturating_sub(hscroll) as u16,
+            cursor_y,
+        ));
+    }
+    let footer = app.error.as_deref().map(sanitize).unwrap_or_else(|| "Ctrl-S save · Esc save and return · Ctrl-Q save and quit · Ctrl-E recovery copy · arrows/Home/End/PageUp/PageDown edit".to_string());
+    frame.render_widget(
+        Paragraph::new(footer).block(Block::default().borders(Borders::TOP)),
+        chunks[1],
+    );
 }
 fn list_state(app: &App) -> ratatui::widgets::ListState {
     let mut state = ratatui::widgets::ListState::default();

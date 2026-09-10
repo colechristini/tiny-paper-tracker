@@ -1,8 +1,8 @@
 use crate::{
     VERSION,
-    model::{Item, ListResponse, MutationResponse},
+    model::{Item, ListResponse, MutationResponse, NoteSnapshot},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     env,
     io::{self, BufRead, BufReader, Write},
@@ -50,6 +50,41 @@ struct StatusRequest<'a> {
     op: &'static str,
     id: &'a str,
     status: &'a str,
+}
+#[derive(Debug, Serialize)]
+struct NoteOpenRequest<'a> {
+    version: u64,
+    op: &'static str,
+    id: &'a str,
+}
+#[derive(Debug, Serialize)]
+struct NoteSaveRequest<'a> {
+    version: u64,
+    op: &'static str,
+    id: &'a str,
+    text: &'a str,
+    revision: &'a str,
+}
+#[derive(Debug, Serialize)]
+struct NoteRecoverRequest<'a> {
+    version: u64,
+    op: &'static str,
+    id: &'a str,
+    text: &'a str,
+}
+#[derive(Debug, Deserialize)]
+struct NoteResponse {
+    version: u64,
+    ok: bool,
+    note: Option<NoteSnapshot>,
+    error: Option<crate::model::ErrorBody>,
+}
+#[derive(Debug, Deserialize)]
+struct RecoverResponse {
+    version: u64,
+    ok: bool,
+    path: Option<String>,
+    error: Option<crate::model::ErrorBody>,
 }
 
 pub struct Bridge {
@@ -145,6 +180,70 @@ impl Bridge {
         response
             .item
             .ok_or_else(|| BridgeError::Backend("backend returned no item".into()))
+    }
+    pub fn note_open(&mut self, id: &str) -> Result<NoteSnapshot, BridgeError> {
+        self.note_request(&NoteOpenRequest {
+            version: VERSION,
+            op: "note_open",
+            id,
+        })
+    }
+    pub fn note_save(
+        &mut self,
+        id: &str,
+        text: &str,
+        revision: &str,
+    ) -> Result<NoteSnapshot, BridgeError> {
+        self.note_request(&NoteSaveRequest {
+            version: VERSION,
+            op: "note_save",
+            id,
+            text,
+            revision,
+        })
+    }
+    pub fn note_recover(&mut self, id: &str, text: &str) -> Result<String, BridgeError> {
+        let response: RecoverResponse = self.request(&NoteRecoverRequest {
+            version: VERSION,
+            op: "note_recover",
+            id,
+            text,
+        })?;
+        if response.version != VERSION {
+            return Err(BridgeError::Backend(
+                "unsupported bridge protocol version".into(),
+            ));
+        }
+        if !response.ok {
+            return Err(BridgeError::Backend(
+                response
+                    .error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "recovery request failed".into()),
+            ));
+        }
+        response
+            .path
+            .ok_or_else(|| BridgeError::Backend("backend returned no recovery path".into()))
+    }
+    fn note_request<T: Serialize>(&mut self, request: &T) -> Result<NoteSnapshot, BridgeError> {
+        let response: NoteResponse = self.request(request)?;
+        if response.version != VERSION {
+            return Err(BridgeError::Backend(
+                "unsupported bridge protocol version".into(),
+            ));
+        }
+        if !response.ok {
+            return Err(BridgeError::Backend(
+                response
+                    .error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "note request failed".into()),
+            ));
+        }
+        response
+            .note
+            .ok_or_else(|| BridgeError::Backend("backend returned no note".into()))
     }
 }
 impl Drop for Bridge {
