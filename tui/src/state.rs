@@ -30,7 +30,6 @@ pub struct MembershipState {
     pub choices: Vec<(String, String)>,
     pub checked: Vec<bool>,
     pub selected: usize,
-    pub scroll: usize,
 }
 impl EditorState {
     pub fn dirty(&self) -> bool {
@@ -369,7 +368,6 @@ impl App {
             choices,
             checked,
             selected: 0,
-            scroll: 0,
         });
         self.error = None;
     }
@@ -389,7 +387,6 @@ impl App {
             }
             _ => {}
         }
-        picker.scroll = picker.selected.saturating_sub(7);
     }
     pub fn cancel_membership(&mut self) {
         self.membership = None;
@@ -544,6 +541,13 @@ mod tests {
             groups: vec![],
             identifiers: vec![],
             metadata: serde_json::Value::Null,
+        }
+    }
+    fn group(id: &str, name: &str, parent_id: Option<&str>) -> Group {
+        Group {
+            id: id.into(),
+            name: name.into(),
+            parent_id: parent_id.map(str::to_string),
         }
     }
     #[test]
@@ -720,5 +724,67 @@ mod tests {
         assert_eq!(app.rename.as_ref().unwrap().buffer.text(), "Paper x 新 題");
         app.cancel_rename();
         assert!(app.rename.is_none());
+    }
+
+    #[test]
+    fn membership_choices_keep_each_child_after_its_sorted_root() {
+        let mut app = App {
+            items: vec![item("x")],
+            groups: vec![
+                group("z", "Zeta", None),
+                group("child", "Child", Some("a")),
+                group("a", "Alpha", None),
+            ],
+            ..Default::default()
+        };
+
+        app.begin_membership();
+
+        assert_eq!(
+            app.membership.as_ref().unwrap().choices,
+            vec![
+                ("a".into(), "Alpha".into()),
+                ("child".into(), "  Alpha/Child".into()),
+                ("z".into(), "Zeta".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn membership_checks_only_the_items_direct_groups() {
+        let mut paper = item("x");
+        paper.groups = vec![serde_json::json!({"id": "child", "name": "Child"})];
+        let mut app = App {
+            items: vec![paper],
+            groups: vec![
+                group("root", "Root", None),
+                group("child", "Child", Some("root")),
+            ],
+            ..Default::default()
+        };
+
+        app.begin_membership();
+
+        assert_eq!(app.membership.as_ref().unwrap().checked, vec![false, true]);
+    }
+
+    #[test]
+    fn membership_draft_and_cancel_do_not_mutate_the_item() {
+        let mut paper = item("x");
+        paper.groups = vec![serde_json::json!({"id": "root", "name": "Root"})];
+        let original_groups = paper.groups.clone();
+        let mut app = App {
+            items: vec![paper],
+            groups: vec![group("root", "Root", None)],
+            ..Default::default()
+        };
+
+        app.begin_membership();
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        assert_eq!(app.items[0].groups, original_groups);
+        app.cancel_membership();
+
+        assert!(app.membership.is_none());
+        assert_eq!(app.items[0].groups, original_groups);
     }
 }

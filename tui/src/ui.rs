@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -127,55 +127,61 @@ pub fn draw(frame: &mut Frame, app: &App) {
         );
     }
     if let Some(picker) = &app.membership {
-        let height = (picker.choices.len() as u16 + 4)
+        let height = (picker.choices.len().max(1) as u16 + 5)
             .min(frame.area().height.saturating_sub(2))
-            .max(6);
-        let area = centered_rect(65, height, frame.area());
+            .max(8);
+        let area = centered_rect(92, height, frame.area());
         frame.render_widget(Clear, area);
-        let mut lines = vec![
-            Line::from(Span::styled(
-                "Direct memberships",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from("Subgroups also include this paper in their parent."),
-        ];
-        let visible = height.saturating_sub(4) as usize;
-        if picker.choices.is_empty() {
-            lines.push(Line::from(
-                "No groups yet. Create groups with lit group create.",
-            ));
-        }
-        lines.extend(
+        let block = Block::default()
+            .title(" Memberships ")
+            .borders(Borders::ALL);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new("Direct checks; child groups also count in parent."),
+            rows[0],
+        );
+        let items = if picker.choices.is_empty() {
+            vec![ListItem::new("No groups yet. Run: lit group create NAME")]
+        } else {
             picker
                 .choices
                 .iter()
                 .enumerate()
-                .skip(picker.scroll)
-                .take(visible)
                 .map(|(i, (_, label))| {
-                    Line::from(Span::styled(
-                        format!("{} {}", if picker.checked[i] { "☑" } else { "☐" }, label),
-                        if i == picker.selected {
-                            Style::default().add_modifier(Modifier::REVERSED)
-                        } else {
-                            Style::default()
-                        },
+                    ListItem::new(format!(
+                        "{} {}",
+                        if picker.checked[i] { "☑" } else { "☐" },
+                        sanitize(label)
                     ))
-                }),
-        );
-        if let Some(error) = &app.error {
-            lines.push(Line::from(Span::styled(
-                sanitize(error),
-                Style::default().fg(Color::Red),
-            )));
+                })
+                .collect()
+        };
+        let list = List::new(items)
+            .highlight_symbol("› ")
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        let mut state = ListState::default();
+        if !picker.choices.is_empty() {
+            state.select(Some(picker.selected));
         }
+        frame.render_stateful_widget(list, rows[1], &mut state);
         frame.render_widget(
-            Paragraph::new(lines).block(
-                Block::default()
-                    .title(" Memberships (Space toggle, Enter apply, Esc cancel) ")
-                    .borders(Borders::ALL),
-            ),
-            area,
+            Paragraph::new(app.error.as_deref().map(sanitize).unwrap_or_default())
+                .style(Style::default().fg(Color::Red)),
+            rows[2],
+        );
+        frame.render_widget(
+            Paragraph::new("↑↓ move · Space toggle · Enter apply · Esc cancel"),
+            rows[3],
         );
     }
 }
@@ -554,11 +560,12 @@ mod tests {
         model::Group,
         model::{Item, Section},
         state::DisplayRow,
-        state::{App, EditorState},
+        state::{App, EditorState, MembershipState},
     };
     use ratatui::{
         Terminal,
         backend::TestBackend,
+        layout::Rect,
         style::{Color, Modifier},
     };
     use unicode_width::UnicodeWidthStr;
@@ -622,6 +629,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(text.contains("all · "));
+        assert!(text.contains("m memberships"));
         assert!(text.contains("g/h"));
         assert!(text.contains("Del delete"));
         let key = buffer
@@ -722,5 +730,81 @@ mod tests {
         let rendered = rename_input(&long, 8);
         assert!(rendered.contains('▌'));
         assert!(rendered.width() <= 8);
+    }
+
+    fn membership_app(count: usize, selected: usize) -> App {
+        App {
+            membership: Some(MembershipState {
+                item_id: "paper".into(),
+                choices: (0..count)
+                    .map(|i| (format!("group-{i:02}"), format!("Group {i:02}")))
+                    .collect(),
+                checked: vec![false; count],
+                selected,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn membership_selection_stays_visible_across_terminal_sizes() {
+        let app = membership_app(35, 34);
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Group 34"));
+        assert!(!text.contains("Group 02"));
+        assert!(text.contains("Direct checks; child groups also count in parent."));
+        assert!(text.contains("Space toggle · Enter apply · Esc cancel"));
+        let buffer = terminal.backend().buffer();
+        assert!(buffer.content().iter().any(|cell| cell.symbol() == "›"));
+        assert!(
+            buffer
+                .content()
+                .iter()
+                .any(|cell| cell.symbol() == "☐" && cell.modifier.contains(Modifier::REVERSED))
+        );
+
+        terminal.backend_mut().resize(120, 40);
+        terminal.resize(Rect::new(0, 0, 120, 40)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Group 02"));
+        assert!(text.contains("Group 34"));
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .any(|cell| cell.symbol() == "›")
+        );
+    }
+
+    #[test]
+    fn empty_membership_picker_reserves_visible_guidance_error_and_controls() {
+        let mut app = membership_app(0, 0);
+        app.error = Some("apply failed explicitly".into());
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains("No groups yet. Run: lit group create NAME"));
+        assert!(text.contains("apply failed explicitly"));
+        assert!(text.contains("↑↓ move · Space toggle · Enter apply · Esc cancel"));
     }
 }
