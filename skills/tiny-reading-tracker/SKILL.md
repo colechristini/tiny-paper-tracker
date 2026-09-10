@@ -79,6 +79,7 @@ group when requested or necessary for a requested grouping; first check
 
 ```sh
 lit --json group create 'Journal Club'
+lit --json group create 'Methods' --parent 'Journal Club'
 lit --json group ls
 lit --json add https://arxiv.org/abs/1706.03762 --group 'Journal Club'
 lit --json group add 'Journal Club' FULL_ITEM_ID
@@ -96,7 +97,9 @@ idempotent; invalid/ambiguous items abort the membership operation. Removing a
 membership or deleting a group retains library items and notes. Do not interpret
 “remove from this group” as deleting the resource. `group ls` returns all groups
 including empty ones with total `item_count`; item JSON includes `groups`.
-Groups are flat and local, not nested or shared libraries. These commands require
+Groups support roots and one child level. Parent filters include direct and child
+members, while child filters include only direct members. A bare name must be
+unambiguous; use `Parent/Child` or a full ID when needed. These commands require
 the checkout's post-v0.1.0 version; use the documented project prefix.
 
 ## Status and notes

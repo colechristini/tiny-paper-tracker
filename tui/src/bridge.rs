@@ -1,6 +1,6 @@
 use crate::{
     VERSION,
-    model::{Item, ListResponse, MutationResponse, NoteSnapshot},
+    model::{Item, ListResponse, MutationResponse, NoteSnapshot, Section},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -131,6 +131,7 @@ pub struct Bridge {
     input: Option<ChildStdin>,
     output: BufReader<ChildStdout>,
 }
+pub type ListData = (Vec<Item>, Vec<crate::model::Group>, Vec<Section>);
 impl Bridge {
     pub fn spawn() -> Result<Self, BridgeError> {
         let python = env::var("LIT_TUI_PYTHON")
@@ -178,7 +179,7 @@ impl Bridge {
         status: &str,
         group: Option<&str>,
         query: &str,
-    ) -> Result<(Vec<Item>, Vec<crate::model::Group>), BridgeError> {
+    ) -> Result<ListData, BridgeError> {
         let response: ListResponse = self.request(&ListRequest {
             version: VERSION,
             op: "list",
@@ -199,7 +200,16 @@ impl Bridge {
                 "unsupported bridge protocol version".into(),
             ));
         }
-        Ok((response.items, response.groups))
+        let sections = if response.sections.is_empty() {
+            vec![Section {
+                id: None,
+                title: "Reading".into(),
+                item_ids: response.items.iter().map(|i| i.id.clone()).collect(),
+            }]
+        } else {
+            response.sections
+        };
+        Ok((response.items, response.groups, sections))
     }
     pub fn set_status(&mut self, id: &str, status: &str) -> Result<Item, BridgeError> {
         let response: MutationResponse = self.request(&StatusRequest {

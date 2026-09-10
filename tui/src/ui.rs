@@ -42,21 +42,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
         .split(chunks[0]);
-    let list_items = app
-        .items
-        .iter()
-        .map(|item| {
-            let marker = match item.status.as_str() {
-                "read" => "✓",
-                "reading" => "▸",
-                _ => "·",
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{marker} "), Style::default().fg(Color::DarkGray)),
-                Span::raw(sanitize(&item.title)),
-            ]))
-        })
-        .collect::<Vec<_>>();
+    let list_items = list_rows(app, false);
     let list = List::new(list_items)
         .block(
             Block::default()
@@ -159,11 +145,7 @@ fn draw_editor(frame: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
         .split(chunks[0]);
-    let list_items = app
-        .items
-        .iter()
-        .map(|item| ListItem::new(sanitize(&item.title)))
-        .collect::<Vec<_>>();
+    let list_items = list_rows(app, true);
     let list = List::new(list_items)
         .block(
             Block::default()
@@ -317,10 +299,54 @@ fn draw_editor(frame: &mut Frame, app: &App) {
 }
 fn list_state(app: &App) -> ratatui::widgets::ListState {
     let mut state = ratatui::widgets::ListState::default();
-    if !app.items.is_empty() {
+    if matches!(
+        app.display_rows.get(app.selected),
+        Some(crate::state::DisplayRow::Item(_))
+    ) {
         state.select(Some(app.selected));
     }
     state
+}
+
+fn list_rows(app: &App, editor: bool) -> Vec<ListItem<'static>> {
+    app.display_rows
+        .iter()
+        .map(|row| match row {
+            crate::state::DisplayRow::Header(id) => {
+                let section = app.sections.iter().find(|s| s.id == *id);
+                let title = section
+                    .map(|s| sanitize(&s.title))
+                    .unwrap_or_else(|| "Reading".into());
+                let count = section.map(|s| s.item_ids.len()).unwrap_or(app.items.len());
+                ListItem::new(Line::from(Span::styled(
+                    format!("── {} ({count}) ──", title),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )))
+            }
+            crate::state::DisplayRow::Empty => ListItem::new(Span::styled(
+                "(empty)",
+                Style::default().fg(Color::DarkGray),
+            )),
+            crate::state::DisplayRow::Item(index) => {
+                let item = &app.items[*index];
+                if editor {
+                    ListItem::new(sanitize(&item.title))
+                } else {
+                    let marker = match item.status.as_str() {
+                        "read" => "✓",
+                        "reading" => "▸",
+                        _ => "·",
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{marker} "), Style::default().fg(Color::DarkGray)),
+                        Span::raw(sanitize(&item.title)),
+                    ]))
+                }
+            }
+        })
+        .collect()
 }
 fn metadata(item: &Item, scroll: u16) -> Paragraph<'static> {
     let authors = if item.authors.is_empty() {
@@ -419,6 +445,8 @@ mod tests {
     use crate::{
         editor::TextBuffer,
         model::Group,
+        model::{Item, Section},
+        state::DisplayRow,
         state::{App, EditorState},
     };
     use ratatui::{
@@ -471,6 +499,7 @@ mod tests {
             groups: vec![Group {
                 id: "g".into(),
                 name: "x".repeat(500),
+                parent_id: None,
             }],
             group: Some("g".into()),
             ..Default::default()
@@ -516,5 +545,61 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(text.contains("Error: visible error"));
+    }
+
+    #[test]
+    fn stacked_sections_render_headers_counts_and_empty_marker() {
+        let item = Item {
+            id: "loose".into(),
+            title: "Loose paper".into(),
+            url: String::new(),
+            kind: String::new(),
+            authors: vec![],
+            venue: None,
+            published_at: None,
+            status: "unread".into(),
+            added_at: None,
+            read_at: None,
+            note_path: None,
+            tags: vec![],
+            groups: vec![],
+            identifiers: vec![],
+            metadata: serde_json::Value::Null,
+        };
+        let app = App {
+            items: vec![item],
+            sections: vec![
+                Section {
+                    id: None,
+                    title: String::new(),
+                    item_ids: vec!["loose".into()],
+                },
+                Section {
+                    id: Some("child".into()),
+                    title: "Child".into(),
+                    item_ids: vec![],
+                },
+            ],
+            display_rows: vec![
+                DisplayRow::Item(0),
+                DisplayRow::Header(Some("child".into())),
+                DisplayRow::Empty,
+            ],
+            ..Default::default()
+        };
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Loose paper"));
+        assert!(text.contains("Child (0)"));
+        assert!(text.contains("(empty)"));
+        assert!(!text.contains("General"));
     }
 }

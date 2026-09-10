@@ -107,12 +107,13 @@ read status. `--no-note` means no registered note path, not a vault scan.
 
 ## Paper groups
 
-Groups are flat, named collections for organizing any saved resource. One item
+Groups are named collections with roots and one optional child level. One item
 can belong to multiple groups, and its read status and note remain shared across
 those groups. Tags remain independent topic labels.
 
 ```sh
 lit group create "Journal Club"
+lit group create "Methods" --parent "Journal Club" # one child level
 lit group create "Attention"
 lit group ls                            # includes empty groups and total item counts
 lit add https://arxiv.org/abs/1706.03762 --group "Journal Club" --group "Attention"
@@ -127,17 +128,19 @@ lit group delete "Friday Reading"
 
 Create a group before passing `--group`; unknown groups fail before ingestion.
 Re-adding a saved URL with `--group` attaches the existing item without resetting
-its state. Group names are trimmed and case-insensitively unique; commands
-accept an exact name or full group ID. Rename preserves the ID and memberships.
+its state. Group names are trimmed and case-insensitively unique among siblings;
+commands accept an exact name, `Parent/Child` path, or full group ID. Parent
+filters include direct members and direct children. Rename preserves the ID and
+memberships.
 Item selectors use the same IDs, unique prefixes, and unambiguous title fragments
 as `lit read`. A multi-item membership operation fails without partial changes
 if any selector is invalid or ambiguous. Repeated add/remove membership is safe.
 
-Removing an item from a group keeps it in the library and other groups. Deleting
-a group removes only that group and its memberships, preserving all papers and
-notes. JSON item output includes `groups: [{id, name}]`. Group names are filters,
-not additional FTS search fields. Nested collections and shared group libraries
-are not implemented.
+Removing an item from a group keeps it in the library and other groups. Removing
+from a parent also removes its child memberships. Deleting a group removes that
+group, its children, and memberships, preserving all papers and notes. JSON item
+output includes `groups: [{id, name}]`. Collections are limited to roots and one
+child level.
 
 The terminal interface uses `g` and `h` to cycle forward and backward through
 the unfiltered library and groups. In the list view, `Delete` (or macOS
@@ -145,7 +148,7 @@ the unfiltered library and groups. In the list view, `Delete` (or macOS
 file intact; text deletion in the editor and search input keeps its normal
 meaning.
 
-Existing databases automatically migrate from schema 1 or schema 2 to schema 3
+Existing databases automatically migrate from schema 1, 2, or 3 to schema 4
 in a transaction when opened. Existing metadata, groups, tags, notes, and
 reading state are preserved. The v0.1.0 and v0.2.0 CLIs cannot open the
 upgraded database; retain a backup if you need to return to an older release.

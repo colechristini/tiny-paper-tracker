@@ -33,6 +33,16 @@ pub struct Item {
 pub struct Group {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Section {
+    pub id: Option<String>,
+    pub title: String,
+    #[serde(default)]
+    pub item_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -43,6 +53,8 @@ pub struct ListResponse {
     pub items: Vec<Item>,
     #[serde(default)]
     pub groups: Vec<Group>,
+    #[serde(default)]
+    pub sections: Vec<Section>,
     pub error: Option<ErrorBody>,
 }
 

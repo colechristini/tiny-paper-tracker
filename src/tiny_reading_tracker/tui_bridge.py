@@ -110,7 +110,63 @@ def _list(request: dict[str, Any], library: Database) -> dict[str, Any]:
     if query:
         items = [item for item in items if query in item["title"].casefold()]
     items.sort(key=lambda item: (item["title"].casefold(), item["id"]))
-    return _response(items=items, groups=library.list_groups())
+    groups = library.list_groups()
+    selected = library.get_group(group) if group is not None else None
+
+    def direct_ids(group_id: str) -> set[str]:
+        return {
+            r[0]
+            for r in library.connection.execute(
+                "SELECT item_id FROM item_groups WHERE group_id=?", (group_id,)
+            )
+        }
+
+    visible_ids = {i["id"] for i in items}
+    title_by_id = {i["id"]: i["title"].casefold() for i in items}
+
+    def section(title: str, ids: set[str], sid: str | None = None) -> dict[str, Any]:
+        ids &= visible_ids
+        return {
+            "id": sid,
+            "title": title,
+            "item_ids": sorted(ids, key=lambda x: (title_by_id.get(x, ""), x)),
+        }
+
+    sections: list[dict[str, Any]] = []
+    if selected is not None:
+        if selected["parent_id"] is not None:
+            sections = [section(selected["name"], direct_ids(selected["id"]), selected["id"])]
+        else:
+            children = sorted(
+                (g for g in groups if g["parent_id"] == selected["id"]),
+                key=lambda g: (g["name"].casefold(), g["id"]),
+            )
+            child_ids = set().union(*(direct_ids(c["id"]) for c in children)) if children else set()
+            sections = [section("", direct_ids(selected["id"]) - child_ids)]
+            sections += [section(c["name"], direct_ids(c["id"]), c["id"]) for c in children]
+    elif any(g["parent_id"] is not None for g in groups):
+        roots = sorted(
+            (g for g in groups if g["parent_id"] is None),
+            key=lambda g: (g["name"].casefold(), g["id"]),
+        )
+        child_sections: list[dict[str, Any]] = []
+        subgroup_assigned: set[str] = set()
+        for root in roots:
+            children = sorted(
+                (g for g in groups if g["parent_id"] == root["id"]),
+                key=lambda g: (g["name"].casefold(), g["id"]),
+            )
+            for child in children:
+                child_items = direct_ids(child["id"])
+                subgroup_assigned |= child_items
+                child_sections.append(
+                    section(f"{root['name']} / {child['name']}", child_items, child["id"])
+                )
+        sections.append(section("", {i["id"] for i in items} - subgroup_assigned))
+        sections += child_sections
+    else:
+        sections = [section("", {i["id"] for i in items})]
+    return _response(items=items, groups=groups, sections=sections)
 
 
 def _handle(

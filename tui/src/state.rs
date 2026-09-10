@@ -2,7 +2,7 @@ use crate::{
     bridge::Bridge,
     completion::Completion,
     editor::TextBuffer,
-    model::{Group, Item},
+    model::{Group, Item, Section},
 };
 use std::time::{Duration, Instant};
 
@@ -46,6 +46,13 @@ pub enum StatusFilter {
     Reading,
     Read,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DisplayRow {
+    Header(Option<String>),
+    Empty,
+    Item(usize),
+}
 impl StatusFilter {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -68,6 +75,8 @@ impl StatusFilter {
 pub struct App {
     pub items: Vec<Item>,
     pub groups: Vec<Group>,
+    pub sections: Vec<Section>,
+    pub display_rows: Vec<DisplayRow>,
     pub selected: usize,
     pub filter: StatusFilter,
     pub group: Option<String>,
@@ -85,6 +94,8 @@ impl Default for App {
         Self {
             items: vec![],
             groups: vec![],
+            sections: vec![],
+            display_rows: vec![],
             selected: 0,
             filter: StatusFilter::All,
             group: None,
@@ -100,23 +111,117 @@ impl Default for App {
     }
 }
 impl App {
+    fn rebuild_display_rows(&mut self) {
+        self.display_rows.clear();
+        if self.sections.is_empty() {
+            self.display_rows
+                .extend((0..self.items.len()).map(DisplayRow::Item));
+            return;
+        }
+        let index_by_id = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| (item.id.as_str(), i))
+            .collect::<std::collections::HashMap<_, _>>();
+        for section in &self.sections {
+            let show_header = !section.title.is_empty();
+            if show_header {
+                self.display_rows
+                    .push(DisplayRow::Header(section.id.clone()));
+            }
+            let mut count = 0;
+            for id in &section.item_ids {
+                if let Some(&index) = index_by_id.get(id.as_str()) {
+                    self.display_rows.push(DisplayRow::Item(index));
+                    count += 1;
+                }
+            }
+            if count == 0 && show_header {
+                self.display_rows.push(DisplayRow::Empty);
+            }
+        }
+    }
+    fn selected_key(&self) -> Option<(String, Option<String>)> {
+        let DisplayRow::Item(index) = self.display_rows.get(self.selected)? else {
+            return None;
+        };
+        let item = self.items.get(*index)?;
+        let section = self.display_rows[..=self.selected]
+            .iter()
+            .rev()
+            .find_map(|row| {
+                if let DisplayRow::Header(id) = row {
+                    id.clone()
+                } else {
+                    None
+                }
+            });
+        Some((item.id.clone(), section))
+    }
+    fn restore_selection(&mut self, key: Option<(String, Option<String>)>) {
+        self.selected = 0;
+        if let Some((id, section)) = key
+            && let Some(pos) = self.display_rows.iter().enumerate().find_map(|(pos, row)| {
+                let DisplayRow::Item(index) = row else {
+                    return None;
+                };
+                if self.items.get(*index).is_some_and(|item| item.id == id)
+                    && self.display_rows[..=pos].iter().rev().find_map(|r| {
+                        if let DisplayRow::Header(sid) = r {
+                            sid.clone()
+                        } else {
+                            None
+                        }
+                    }) == section
+                {
+                    Some(pos)
+                } else {
+                    None
+                }
+            })
+        {
+            self.selected = pos;
+            return;
+        }
+        self.selected = (0..self.display_rows.len())
+            .find(|&pos| matches!(self.display_rows[pos], DisplayRow::Item(_)))
+            .unwrap_or(0);
+    }
+    fn next_selectable(&self, from: usize, delta: i32) -> Option<usize> {
+        if self.display_rows.is_empty() {
+            return None;
+        }
+        let len = self.display_rows.len() as i32;
+        for step in 1..=len {
+            let pos = (from as i32 + delta * step).rem_euclid(len) as usize;
+            if matches!(self.display_rows[pos], DisplayRow::Item(_)) {
+                return Some(pos);
+            }
+        }
+        None
+    }
     pub fn refresh(&mut self, bridge: &mut Bridge) {
+        let key = self.selected_key();
         match bridge.list(self.filter.as_str(), self.group.as_deref(), &self.query) {
-            Ok((items, groups)) => {
+            Ok((items, groups, sections)) => {
                 self.items = items;
                 self.groups = groups;
-                self.selected = self.selected.min(self.items.len().saturating_sub(1));
+                self.sections = sections;
+                self.rebuild_display_rows();
+                self.restore_selection(key);
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
         }
     }
     pub fn move_selection(&mut self, delta: i32) {
-        if self.items.is_empty() {
-            return;
+        if self.display_rows.is_empty() && !self.items.is_empty() {
+            self.rebuild_display_rows();
         }
-        let n = self.items.len() as i32;
-        self.selected = ((self.selected as i32 + delta).rem_euclid(n)) as usize;
+        if let Some(next) = self.next_selectable(self.selected, delta) {
+            self.selected = next;
+        }
         self.metadata_scroll = 0;
     }
     pub fn cycle_group(&mut self, delta: i32) {
@@ -125,13 +230,24 @@ impl App {
         let current = self
             .group
             .as_deref()
-            .and_then(|id| self.groups.iter().position(|g| g.id == id).map(|i| i + 1))
+            .and_then(|id| {
+                self.groups
+                    .iter()
+                    .filter(|g| g.parent_id.is_none())
+                    .position(|g| g.id == id)
+                    .map(|i| i + 1)
+            })
             .unwrap_or(0) as i32;
-        let count = self.groups.len() as i32 + 1;
+        let roots = self
+            .groups
+            .iter()
+            .filter(|g| g.parent_id.is_none())
+            .collect::<Vec<_>>();
+        let count = roots.len() as i32 + 1;
         let next = (current + delta).rem_euclid(count) as usize;
         self.group = next
             .checked_sub(1)
-            .and_then(|i| self.groups.get(i))
+            .and_then(|i| roots.get(i))
             .map(|g| g.id.clone());
         self.selected = 0;
         self.metadata_scroll = 0;
@@ -149,7 +265,13 @@ impl App {
         }
     }
     pub fn selected_item(&self) -> Option<&Item> {
-        self.items.get(self.selected)
+        if self.display_rows.is_empty() {
+            return self.items.get(self.selected);
+        }
+        match self.display_rows.get(self.selected)? {
+            DisplayRow::Item(index) => self.items.get(*index),
+            _ => None,
+        }
     }
     pub fn set_status(&mut self, bridge: &mut Bridge, status: &str) {
         if let Some(id) = self.selected_item().map(|x| x.id.clone()) {
@@ -166,8 +288,11 @@ impl App {
         };
         match bridge.note_open(&id) {
             Ok(note) => {
-                if let Some(item) = self.items.get_mut(self.selected) {
-                    item.note_path = Some(note.path.clone());
+                if let Some(DisplayRow::Item(index)) = self.display_rows.get(self.selected) {
+                    let index = *index;
+                    if let Some(item) = self.items.get_mut(index) {
+                        item.note_path = Some(note.path.clone());
+                    }
                 }
                 self.editor = Some(EditorState {
                     item_id: id,
@@ -250,6 +375,26 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item(id: &str) -> Item {
+        Item {
+            id: id.into(),
+            title: format!("Paper {id}"),
+            url: String::new(),
+            kind: String::new(),
+            authors: vec![],
+            venue: None,
+            published_at: None,
+            status: "unread".into(),
+            added_at: None,
+            read_at: None,
+            note_path: None,
+            tags: vec![],
+            groups: vec![],
+            identifiers: vec![],
+            metadata: serde_json::Value::Null,
+        }
+    }
     #[test]
     fn selection_wraps() {
         let mut app = App {
@@ -292,10 +437,12 @@ mod tests {
                 Group {
                     id: "one".into(),
                     name: "One".into(),
+                    parent_id: None,
                 },
                 Group {
                     id: "two".into(),
                     name: "Two".into(),
+                    parent_id: None,
                 },
             ],
             ..Default::default()
@@ -311,5 +458,101 @@ mod tests {
         app.group = Some("stale".into());
         app.cycle_group(-1);
         assert_eq!(app.group.as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn subgroup_rows_skip_headers_and_empty_sections_and_keep_loose_item_first() {
+        let mut app = App {
+            items: vec![item("loose"), item("child-a")],
+            sections: vec![
+                Section {
+                    id: None,
+                    title: String::new(),
+                    item_ids: vec!["loose".into()],
+                },
+                Section {
+                    id: Some("one".into()),
+                    title: "One".into(),
+                    item_ids: vec!["child-a".into()],
+                },
+                Section {
+                    id: Some("two".into()),
+                    title: "Two".into(),
+                    item_ids: vec![],
+                },
+            ],
+            ..Default::default()
+        };
+        app.rebuild_display_rows();
+        assert_eq!(
+            app.display_rows,
+            vec![
+                DisplayRow::Item(0),
+                DisplayRow::Header(Some("one".into())),
+                DisplayRow::Item(1),
+                DisplayRow::Header(Some("two".into())),
+                DisplayRow::Empty,
+            ]
+        );
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.selected_item().unwrap().id, "loose");
+        app.move_selection(1);
+        assert_eq!(app.selected, 2);
+        app.move_selection(1);
+        assert_eq!(app.selected, 0);
+        app.move_selection(-1);
+        assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn duplicate_occurrence_restores_by_item_and_section() {
+        let mut app = App {
+            items: vec![item("paper")],
+            sections: vec![
+                Section {
+                    id: Some("one".into()),
+                    title: "One".into(),
+                    item_ids: vec!["paper".into()],
+                },
+                Section {
+                    id: Some("two".into()),
+                    title: "Two".into(),
+                    item_ids: vec!["paper".into()],
+                },
+            ],
+            ..Default::default()
+        };
+        app.rebuild_display_rows();
+        app.selected = 3;
+        assert_eq!(app.selected_item().unwrap().id, "paper");
+        let key = app.selected_key();
+        app.sections.reverse();
+        app.rebuild_display_rows();
+        app.restore_selection(key);
+        assert_eq!(app.selected, 1);
+        assert_eq!(app.selected_item().unwrap().id, "paper");
+    }
+
+    #[test]
+    fn group_cycle_ignores_child_groups() {
+        let mut app = App {
+            groups: vec![
+                Group {
+                    id: "root".into(),
+                    name: "Root".into(),
+                    parent_id: None,
+                },
+                Group {
+                    id: "child".into(),
+                    name: "Child".into(),
+                    parent_id: Some("root".into()),
+                },
+            ],
+            ..Default::default()
+        };
+        app.cycle_group(1);
+        assert_eq!(app.group.as_deref(), Some("root"));
+        app.cycle_group(1);
+        assert_eq!(app.group, None);
     }
 }

@@ -12,7 +12,7 @@ from typing import Any, Self
 
 from .models import ResolvedItem
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 VALID_STATUSES = {"unread", "reading", "read"}
 
 
@@ -34,6 +34,10 @@ class AmbiguousItemError(DatabaseError):
 
 class GroupNotFoundError(DatabaseError):
     """Raised when no group matches an exact ID or name lookup."""
+
+
+class AmbiguousGroupError(DatabaseError):
+    """Raised when a bare group name matches multiple groups."""
 
 
 def _now() -> str:
@@ -135,11 +139,11 @@ class Database:
             self.connection.execute("PRAGMA foreign_keys = OFF")
             self._begin()
             version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
-            if version not in (0, 1, 2, SCHEMA_VERSION):
+            if version not in (0, 1, 2, 3, SCHEMA_VERSION):
                 raise DatabaseError(
                     f"unsupported database schema version {version}; expected {SCHEMA_VERSION}"
                 )
-            if version == SCHEMA_VERSION:
+            if version == 4:
                 self.connection.commit()
                 self.connection.execute("PRAGMA foreign_keys = ON")
                 return
@@ -191,8 +195,10 @@ class Database:
                 CREATE TABLE groups (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    name_key TEXT NOT NULL UNIQUE,
-                    created_at TEXT NOT NULL
+                    name_key TEXT NOT NULL,
+                    parent_id TEXT REFERENCES groups(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(parent_id, name_key)
                 )
                 """)
                 self.connection.execute("""
@@ -234,6 +240,46 @@ class Database:
                 self.connection.execute("ALTER TABLE items_v3 RENAME TO items")
                 if list(self.connection.execute("PRAGMA foreign_key_check")):
                     raise DatabaseError("database migration failed foreign-key validation")
+            if version in (2, 3):
+                self.connection.execute("ALTER TABLE groups RENAME TO groups_v3")
+                self.connection.execute("""CREATE TABLE groups (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL,
+                    parent_id TEXT REFERENCES groups(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL, UNIQUE(parent_id, name_key)
+                )""")
+                self.connection.execute("""INSERT INTO groups (id,name,name_key,created_at)
+                    SELECT id,name,name_key,created_at FROM groups_v3""")
+                self.connection.execute("""CREATE TABLE item_groups_v4 (
+                    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    PRIMARY KEY (group_id, item_id)
+                )""")
+                self.connection.execute(
+                    "INSERT INTO item_groups_v4 SELECT group_id,item_id FROM item_groups"
+                )
+                self.connection.execute("DROP TABLE item_groups")
+                self.connection.execute("ALTER TABLE item_groups_v4 RENAME TO item_groups")
+                self.connection.execute(
+                    "CREATE INDEX item_groups_item_id_idx ON item_groups(item_id)"
+                )
+                self.connection.execute("DROP TABLE groups_v3")
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS groups_parent_idx ON groups(parent_id)"
+            )
+            self.connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS groups_root_name_idx ON groups(name_key) WHERE parent_id IS NULL"
+            )
+            self.connection.execute("""CREATE TRIGGER IF NOT EXISTS groups_parent_is_root_insert
+                BEFORE INSERT ON groups WHEN NEW.parent_id IS NOT NULL AND
+                (NEW.parent_id = NEW.id OR (SELECT parent_id FROM groups WHERE id = NEW.parent_id) IS NOT NULL)
+                BEGIN SELECT RAISE(ABORT, 'groups may have at most one parent level'); END""")
+            self.connection.execute("""CREATE TRIGGER IF NOT EXISTS groups_parent_is_root_update
+                BEFORE UPDATE OF parent_id ON groups WHEN NEW.parent_id IS NOT NULL AND
+                (NEW.parent_id = NEW.id OR (SELECT parent_id FROM groups WHERE id = NEW.parent_id) IS NOT NULL
+                 OR (SELECT COUNT(*) FROM groups WHERE parent_id=NEW.id) > 0)
+                BEGIN SELECT RAISE(ABORT, 'groups may have at most one parent level'); END""")
+            if list(self.connection.execute("PRAGMA foreign_key_check")):
+                raise DatabaseError("database migration failed foreign-key validation")
             self.connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self.connection.commit()
             self.connection.execute("PRAGMA foreign_keys = ON")
@@ -345,9 +391,12 @@ class Database:
 
     def _group_query(self) -> str:
         return """
-            SELECT g.id, g.name, g.name_key, g.created_at, COUNT(ig.item_id) AS item_count
-            FROM groups AS g
-            LEFT JOIN item_groups AS ig ON ig.group_id = g.id
+            SELECT g.id, g.name, g.name_key, g.parent_id, g.created_at,
+                   CASE WHEN g.parent_id IS NULL THEN g.name ELSE p.name || '/' || g.name END AS path,
+                   (SELECT COUNT(DISTINCT ig2.item_id) FROM item_groups ig2
+                    WHERE ig2.group_id = g.id OR ig2.group_id IN
+                      (SELECT c.id FROM groups c WHERE c.parent_id = g.id)) AS item_count
+            FROM groups AS g LEFT JOIN groups AS p ON p.id = g.parent_id
         """
 
     @staticmethod
@@ -355,27 +404,62 @@ class Database:
         return {
             "id": row["id"],
             "name": row["name"],
+            "parent_id": row["parent_id"],
+            "path": row["path"],
             "created_at": row["created_at"],
             "item_count": row["item_count"],
         }
 
-    def _resolve_group(self, query: str) -> dict[str, Any]:
-        query, name_key = _group_name(query)
+    def _group_path(self, group_id: str) -> str:
         row = self.connection.execute(
-            self._group_query() + " WHERE g.id = ? GROUP BY g.id", (query,)
+            "SELECT name,parent_id FROM groups WHERE id=?", (group_id,)
         ).fetchone()
         if row is None:
-            row = self.connection.execute(
-                self._group_query() + " WHERE g.name_key = ? GROUP BY g.id", (name_key,)
-            ).fetchone()
-        if row is None:
-            raise GroupNotFoundError(f"group not found: {query}")
-        return self._row_to_group(row)
+            raise GroupNotFoundError(f"group not found: {group_id}")
+        return (
+            row["name"]
+            if not row["parent_id"]
+            else f"{self._group_path(row['parent_id'])}/{row['name']}"
+        )
 
-    def create_group(self, name: str) -> dict[str, Any]:
+    def _resolve_group(self, query: str) -> dict[str, Any]:
+        query, name_key = _group_name(query)
+        row = self.connection.execute(self._group_query() + " WHERE g.id = ?", (query,)).fetchone()
+        if row is not None:
+            return self._row_to_group(row)
+        rows = self.connection.execute(
+            self._group_query() + " WHERE g.name_key = ?", (name_key,)
+        ).fetchall()
+        if len(rows) == 1:
+            return self._row_to_group(rows[0])
+        if len(rows) > 1 and "/" not in query:
+            candidates = ", ".join(self._group_path(r["id"]) for r in rows)
+            raise AmbiguousGroupError(f"ambiguous group {query!r}: {candidates}")
+        if "/" in query:
+            parts = query.split("/")
+            if len(parts) == 2:
+                parts = [part.strip() for part in parts]
+                row = self.connection.execute(
+                    self._group_query()
+                    + " WHERE p.name_key=? AND p.parent_id IS NULL AND g.name_key=?",
+                    (parts[0].casefold(), parts[1].casefold()),
+                ).fetchone()
+                if row is not None:
+                    return self._row_to_group(row)
+        if not rows:
+            raise GroupNotFoundError(f"group not found: {query}")
+        raise GroupNotFoundError(f"group not found: {query}")
+
+    def create_group(self, name: str, parent: str | None = None) -> dict[str, Any]:
         name, name_key = _group_name(name)
         try:
             self._begin()
+            parent_id = None
+            if parent is not None:
+                parent_group = self._resolve_group(parent)
+                if parent_group["parent_id"] is not None:
+                    raise DatabaseError("groups may have at most one parent level")
+                parent_id = parent_group["id"]
             if self.connection.execute("SELECT 1 FROM groups WHERE id = ?", (name_key,)).fetchone():
                 raise DatabaseError("group name conflicts with an existing group ID")
             while True:
@@ -388,15 +472,17 @@ class Database:
                 ):
                     break
             self.connection.execute(
-                "INSERT INTO groups (id, name, name_key, created_at) VALUES (?, ?, ?, ?)",
-                (group_id, name, name_key, _now()),
+                "INSERT INTO groups (id, name, name_key, parent_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (group_id, name, name_key, parent_id, _now()),
             )
             result = self._resolve_group(group_id)
             self.connection.commit()
             return result
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as exc:
             if self.connection.in_transaction:
                 self.connection.rollback()
+            if "at most one parent" in str(exc):
+                raise DatabaseError(str(exc)) from None
             raise DatabaseError(f"group already exists: {name}") from None
         except Exception:
             if self.connection.in_transaction:
@@ -490,9 +576,22 @@ class Database:
             self._begin()
             group_id = self._resolve_group(query)["id"]
             normalized = self._validate_item_ids(item_ids)
+            group = self._resolve_group(group_id)
+            ids = (
+                [group_id]
+                + [
+                    r[0]
+                    for r in self.connection.execute(
+                        "SELECT id FROM groups WHERE parent_id=?", (group_id,)
+                    )
+                ]
+                if group["parent_id"] is None
+                else [group_id]
+            )
             self.connection.executemany(
-                "DELETE FROM item_groups WHERE group_id = ? AND item_id = ?",
-                ((group_id, item_id) for item_id in normalized),
+                "DELETE FROM item_groups WHERE group_id IN (%s) AND item_id = ?"
+                % ",".join("?" for _ in ids),
+                ([*ids, item_id] for item_id in normalized),
             )
             result = self._resolve_group(group_id)
             self.connection.commit()
@@ -601,9 +700,9 @@ class Database:
             clauses.append("i.note_path IS NULL")
         if group_id is not None:
             clauses.append(
-                "EXISTS (SELECT 1 FROM item_groups ig WHERE ig.item_id=i.id AND ig.group_id=?)"
+                "EXISTS (SELECT 1 FROM item_groups ig WHERE ig.item_id=i.id AND (ig.group_id=? OR ig.group_id IN (SELECT id FROM groups WHERE parent_id=?)))"
             )
-            parameters.append(group_id)
+            parameters.extend([group_id, group_id])
         sql = self._item_query()
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
@@ -627,10 +726,8 @@ class Database:
             sql += " AND i.status = ?"
             parameters.append(status)
         if group_id is not None:
-            sql += (
-                " AND EXISTS (SELECT 1 FROM item_groups ig WHERE ig.item_id=i.id AND ig.group_id=?)"
-            )
-            parameters.append(group_id)
+            sql += " AND EXISTS (SELECT 1 FROM item_groups ig WHERE ig.item_id=i.id AND (ig.group_id=? OR ig.group_id IN (SELECT id FROM groups WHERE parent_id=?)))"
+            parameters.extend([group_id, group_id])
         sql += " ORDER BY bm25(item_search), i.added_at DESC, i.id DESC"
         try:
             rows = self.connection.execute(sql, parameters)
