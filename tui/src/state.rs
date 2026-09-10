@@ -161,8 +161,8 @@ impl App {
     }
     fn restore_selection(&mut self, key: Option<(String, Option<String>)>) {
         self.selected = 0;
-        if let Some((id, section)) = key {
-            if let Some(pos) = self.display_rows.iter().enumerate().find_map(|(pos, row)| {
+        if let Some((id, section)) = key
+            && let Some(pos) = self.display_rows.iter().enumerate().find_map(|(pos, row)| {
                 let DisplayRow::Item(index) = row else {
                     return None;
                 };
@@ -179,10 +179,10 @@ impl App {
                 } else {
                     None
                 }
-            }) {
-                self.selected = pos;
-                return;
-            }
+            })
+        {
+            self.selected = pos;
+            return;
         }
         self.selected = (0..self.display_rows.len())
             .find(|&pos| matches!(self.display_rows[pos], DisplayRow::Item(_)))

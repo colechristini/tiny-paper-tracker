@@ -131,6 +131,7 @@ pub struct Bridge {
     input: Option<ChildStdin>,
     output: BufReader<ChildStdout>,
 }
+pub type ListData = (Vec<Item>, Vec<crate::model::Group>, Vec<Section>);
 impl Bridge {
     pub fn spawn() -> Result<Self, BridgeError> {
         let python = env::var("LIT_TUI_PYTHON")
@@ -178,7 +179,7 @@ impl Bridge {
         status: &str,
         group: Option<&str>,
         query: &str,
-    ) -> Result<(Vec<Item>, Vec<crate::model::Group>, Vec<Section>), BridgeError> {
+    ) -> Result<ListData, BridgeError> {
         let response: ListResponse = self.request(&ListRequest {
             version: VERSION,
             op: "list",
