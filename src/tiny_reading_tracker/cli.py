@@ -343,10 +343,14 @@ def show_group(ctx, group):
 
 @group_app.command("create")
 @handled
-def group_create(ctx: typer.Context, name: str):
+def group_create(
+    ctx: typer.Context,
+    name: str,
+    parent: str | None = typer.Option(None, "--parent", help="Create as a child of this root group."),
+):
     """Create an empty group. Names are case-insensitively unique."""
     with Database(ctx.obj["config"].db) as library:
-        show_group(ctx, library.create_group(name))
+        show_group(ctx, library.create_group(name, parent=parent))
 
 
 @group_app.command("ls")
