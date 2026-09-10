@@ -788,6 +788,29 @@ class Database:
             raise ItemNotFoundError(f"item not found: {item_id}")
         return self._get_id(item_id)
 
+    def rename_item(self, item_id: str, title: str) -> dict[str, Any]:
+        """Rename an item by its exact full ID and refresh its FTS record."""
+        if not isinstance(item_id, str) or not item_id:
+            raise DatabaseError("rename_item requires a full item ID")
+        if not isinstance(title, str) or not title.strip():
+            raise DatabaseError("item title must not be empty")
+        title = title.strip()
+        try:
+            self._begin()
+            cursor = self.connection.execute(
+                "UPDATE items SET title=? WHERE id=?", (title, item_id)
+            )
+            if cursor.rowcount == 0:
+                raise ItemNotFoundError(f"item not found: {item_id}")
+            self._refresh_search(item_id)
+            result = self._get_id(item_id)
+            self.connection.commit()
+            return result
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+
     def delete_item(self, item_id: str) -> None:
         """Delete one item by its exact full ID, retaining notes and shared records."""
         if not isinstance(item_id, str) or not item_id:

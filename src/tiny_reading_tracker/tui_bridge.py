@@ -187,6 +187,15 @@ def _handle(
         if not isinstance(item_id, str) or not isinstance(status, str):
             return _error("set_status requires string id and status", "request")
         return _response(item=library.set_status(item_id, status))
+    if operation == "rename_item":
+        item_id = request.get("id")
+        title = request.get("title")
+        if not isinstance(item_id, str) or not isinstance(title, str):
+            return _error("rename_item requires string id and title", "request")
+        try:
+            return _response(item=library.rename_item(item_id, title))
+        except DatabaseError as exc:
+            return _error(str(exc), "request")
     if operation == "delete_item":
         item_id = request.get("id")
         if not isinstance(item_id, str) or not item_id:

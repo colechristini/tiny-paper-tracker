@@ -53,6 +53,26 @@ def test_schema_durability_and_context_close(tmp_path: Path) -> None:
         assert reopened.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
+def test_rename_item_refreshes_fts_and_preserves_state(tmp_path: Path) -> None:
+    with Database(tmp_path / "library.sqlite3") as db:
+        group = db.create_group("Keep")
+        item, _ = db.add(article(), tags=["tag"], groups=[group["id"]])
+        db.connection.execute(
+            "UPDATE items SET status='read', note_path='Reading/keep.md' WHERE id=?", (item["id"],)
+        )
+        renamed = db.rename_item(item["id"], "  Renamed SQLite Paper  ")
+        assert renamed["title"] == "Renamed SQLite Paper"
+        assert renamed["groups"] == [{"id": group["id"], "name": "Keep"}]
+        assert renamed["note_path"] == "Reading/keep.md"
+        assert renamed["status"] == "read"
+        assert [found["id"] for found in db.search('"Renamed SQLite Paper"')] == [item["id"]]
+        assert db.search('"Practical SQLite"') == []
+        with pytest.raises(DatabaseError, match="item not found"):
+            db.rename_item(item["id"][:8], "Nope")
+        with pytest.raises(DatabaseError, match="empty"):
+            db.rename_item(item["id"], "  ")
+
+
 def test_duplicate_adds_aliases_and_tags_but_preserves_fields(tmp_path: Path) -> None:
     with Database(tmp_path / "db.sqlite") as db:
         original, _ = db.add(article(), tags=["first"])
