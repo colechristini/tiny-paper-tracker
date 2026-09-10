@@ -8,6 +8,7 @@ never reads or writes the user's configured library or notes directory.
 from __future__ import annotations
 
 import argparse
+import codecs
 import json
 import os
 import pty
@@ -21,6 +22,8 @@ import tempfile
 import termios
 import time
 from pathlib import Path
+
+import pyte
 
 from tiny_reading_tracker.db import Database
 from tiny_reading_tracker.models import ResolvedItem
@@ -53,6 +56,9 @@ class PtySession:
             close_fds=True,
         )
         self.output = ""
+        self.screen = pyte.Screen(100, 32)
+        self.stream = pyte.Stream(self.screen)
+        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
     def _set_size(self, columns: int, rows: int) -> None:
         size = struct.pack("HHHH", rows, columns, 0, 0)
@@ -76,21 +82,36 @@ class PtySession:
         except OSError:
             return
         if chunk:
-            self.output = (self.output + chunk.decode("utf-8", errors="replace"))[-200_000:]
+            decoded = self.decoder.decode(chunk)
+            self.output = (self.output + decoded)[-200_000:]
+            self.stream.feed(decoded)
+
+    def screen_text(self) -> str:
+        """Return the current terminal contents after applying all redraws."""
+
+        # Build rows directly instead of ``Screen.display``: pyte 0.8 can
+        # encounter empty wide-character continuation cells while ratatui is
+        # redrawing a frame, and its renderer assumes every cell has data.
+        rows: list[str] = []
+        for row in self.screen.buffer.values():
+            rows.append(
+                "".join((getattr(row.get(column), "data", "") or " ") for column in range(100))
+            )
+        return "\n".join(rows)
 
     def wait_until(self, condition, description: str, timeout: float = 8.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if condition(visible_output(self.output)):
+            if condition(self.screen_text()):
                 return
             remaining = max(0.0, deadline - time.monotonic())
             readable, _, _ = select.select([self.master], [], [], min(0.2, remaining))
             if readable:
                 self._read()
-        if condition(visible_output(self.output)):
+        if condition(self.screen_text()):
             return
         raise SmokeFailure(
-            f"timed out waiting for {description}; output tail:\n{visible_output(self.output)[-2000:]}"
+            f"timed out waiting for {description}; screen tail:\n{self.screen_text()[-2000:]}"
         )
 
     def wait_for_file(self, condition, description: str, timeout: float = 8.0) -> None:
