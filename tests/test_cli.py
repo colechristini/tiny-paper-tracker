@@ -105,3 +105,82 @@ def test_duplicate_can_add_tags_without_network(invoke, monkeypatch):
     result = invoke("add", "https://example.org/attention", "--tag", "new-tag")
     assert result.exit_code == 0, result.output
     assert len(json.loads(invoke("ls", "--tag", "new-tag").stdout)) == 1
+
+
+def test_group_membership_lifecycle(invoke):
+    created = invoke("group", "create", "Reading Club")
+    assert created.exit_code == 0, created.output
+    group_id = json.loads(created.stdout)["id"]
+    invoke("group", "create", "Research")
+    saved = invoke(
+        "add", "https://example.org/attention", "--group", "Reading Club", "--group", "Research"
+    )
+    assert saved.exit_code == 0, saved.output
+    item = json.loads(saved.stdout)["results"][0]["item"]
+    assert {g["name"] for g in item["groups"]} == {"Reading Club", "Research"}
+    invoke("add", "https://example.org/diffusion")
+    assert len(json.loads(invoke("ls", "--group", group_id).stdout)) == 1
+    assert len(json.loads(invoke("search", "Study", "--group", "Reading Club").stdout)) == 1
+    assert invoke("group", "add", "Reading Club", "Diffusion").exit_code == 0
+    assert invoke("group", "add", "Reading Club", "Diffusion").exit_code == 0
+    assert len(json.loads(invoke("ls", "--group", group_id).stdout)) == 2
+    renamed = invoke("group", "rename", group_id, "Favorites")
+    assert json.loads(renamed.stdout)["id"] == group_id
+    assert invoke("read", item["id"], "--note", "Keep this thought.").exit_code == 0
+    assert len(json.loads(invoke("ls", "--group", "Favorites").stdout)) == 1
+    assert len(json.loads(invoke("ls", "--all", "--group", "Favorites").stdout)) == 2
+    assert invoke("group", "remove", "Favorites", item["id"]).exit_code == 0
+    assert len(json.loads(invoke("ls", "--read", "--group", "Research").stdout)) == 1
+    assert invoke("group", "delete", "Research").exit_code == 0
+    remaining = json.loads(invoke("ls", "--read").stdout)[0]
+    assert remaining["note_path"] and remaining["read_at"]
+    assert remaining["groups"] == []
+    assert len(json.loads(invoke("ls", "--all").stdout)) == 2
+
+
+def test_unknown_group_prevents_network_and_writes(invoke, monkeypatch):
+    def no_network(*args):
+        raise AssertionError("Unknown groups must fail before resolution")
+
+    monkeypatch.setattr(cli, "resolve", no_network)
+    result = invoke("add", "https://example.org/attention", "--group", "Missing")
+    assert result.exit_code == 1
+    assert "error" in json.loads(result.stdout)
+    assert json.loads(invoke("ls", "--all").stdout) == []
+    assert invoke("ls", "--group", "Missing").exit_code == 1
+    assert invoke("search", "Study", "--group", "Missing").exit_code == 1
+
+
+def test_group_add_ambiguity_changes_no_memberships(invoke):
+    invoke("group", "create", "Work")
+    invoke("add", "https://example.org/attention", "https://example.org/diffusion")
+    result = invoke("group", "add", "Work", "Attention", "Study")
+    assert result.exit_code == 1
+    assert json.loads(invoke("ls", "--all", "--group", "Work").stdout) == []
+
+
+def test_duplicate_save_joins_new_group_without_network(invoke, monkeypatch):
+    invoke("group", "create", "Work")
+    invoke("group", "create", "Club")
+    saved = invoke("add", "https://example.org/attention", "--group", "Work")
+    item_id = json.loads(saved.stdout)["results"][0]["item"]["id"]
+    invoke("read", item_id)
+
+    def no_network(*args):
+        raise AssertionError("Duplicate must not need the translator")
+
+    monkeypatch.setattr(cli, "resolve", no_network)
+    result = invoke("add", "https://example.org/attention", "--group", "Club")
+    assert result.exit_code == 0, result.output
+    item = json.loads(result.stdout)["results"][0]["item"]
+    assert item["id"] == item_id and item["status"] == "read"
+    assert {g["name"] for g in item["groups"]} == {"Work", "Club"}
+
+
+def test_group_names_are_exact_and_case_insensitive(invoke):
+    invoke("group", "create", "  Reading Club  ")
+    assert invoke("group", "create", "READING CLUB").exit_code == 1
+    assert invoke("group", "rename", "Club", "Renamed").exit_code == 1
+    renamed = invoke("group", "rename", "reading club", "Renamed")
+    assert renamed.exit_code == 0, renamed.output
+    assert json.loads(invoke("group", "ls").stdout)[0]["name"] == "Renamed"

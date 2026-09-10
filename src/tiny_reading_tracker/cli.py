@@ -1,4 +1,4 @@
-"""Six commands for humans and agents; network concurrency, serialized local writes."""
+"""Reading and group commands; network concurrency, serialized local writes."""
 
 import functools
 import json
@@ -23,6 +23,8 @@ app = typer.Typer(
     pretty_exceptions_enable=False,
     help="Save resources, track reading, and keep notes in Markdown.",
 )
+group_app = typer.Typer(no_args_is_help=True, help="Organize resources into named collections.")
+app.add_typer(group_app, name="group")
 
 
 def clean(value: object) -> str:
@@ -72,6 +74,9 @@ def add(
     ctx: typer.Context,
     values: list[str] = typer.Argument(None, help="URLs or identifiers; no arguments reads stdin."),
     tag: list[str] | None = typer.Option(None, "--tag", help="Repeat for multiple tags."),
+    group: list[str] | None = typer.Option(
+        None, "--group", help="Existing group name or ID; repeatable."
+    ),
 ):
     """Save a batch; failures do not discard successful inputs. Re-adding preserves status."""
     cfg: Config = ctx.obj["config"]
@@ -83,6 +88,8 @@ def add(
         raise ValueError("No URLs or identifiers supplied")
 
     with Database(cfg.db) as library:
+        # Fail on an unknown group before starting lookups or saving any items.
+        group_ids = [library.get_group(query)["id"] for query in group or []]
 
         def prepare(value):
             # Worker threads do network work only. SQLite writes stay on the parent thread.
@@ -107,6 +114,7 @@ def add(
                             identifiers=input_identifiers(value),
                         ),
                         tags=tag,
+                        groups=group_ids,
                     )
                     results.append({"input": value, "outcome": "exists", "item": item})
                 else:
@@ -121,7 +129,7 @@ def add(
                 try:
                     if isinstance(resolved, Exception):
                         raise resolved
-                    item, created = library.add(resolved, tags=tag)
+                    item, created = library.add(resolved, tags=tag, groups=group_ids)
                     results[index] = {
                         "input": value,
                         "outcome": "added" if created else "exists",
@@ -162,6 +170,7 @@ def list_items(
     tag: str | None = typer.Option(None),
     kind: str | None = typer.Option(None, "--type"),
     no_note: bool = typer.Option(False, "--no-note"),
+    group: str | None = typer.Option(None, "--group", help="Filter by group name or ID."),
 ):
     """List the unread queue by default."""
     if read and all_items:
@@ -174,6 +183,7 @@ def list_items(
                 tag=tag,
                 kind=kind,
                 no_note=no_note,
+                group=group,
             ),
         )
 
@@ -184,10 +194,11 @@ def search(
     ctx: typer.Context,
     query: str,
     read: bool = typer.Option(False, "--read"),
+    group: str | None = typer.Option(None, "--group", help="Search within a group."),
 ):
     """Search titles, authors, venues and tags using SQLite FTS5 syntax."""
     with Database(ctx.obj["config"].db) as library:
-        show_items(ctx, library.search(query, status="read" if read else None))
+        show_items(ctx, library.search(query, status="read" if read else None, group=group))
 
 
 def make_note(library, item, cfg, text):
@@ -250,3 +261,76 @@ def note(
         if not webbrowser.open("obsidian://open?" + urlencode({"path": str(path)})):
             typer.echo("Note saved; could not launch Obsidian. Open the path manually.", err=True)
     emit(ctx, {"id": item["id"], "note_path": str(path)}, [str(path)])
+
+
+def show_group(ctx, group):
+    emit(ctx, group, [f"{group['id']}  {group['name']}  ({group['item_count']} items)"])
+
+
+@group_app.command("create")
+@handled
+def group_create(ctx: typer.Context, name: str):
+    """Create an empty group. Names are case-insensitively unique."""
+    with Database(ctx.obj["config"].db) as library:
+        show_group(ctx, library.create_group(name))
+
+
+@group_app.command("ls")
+@handled
+def group_list(ctx: typer.Context):
+    """List groups, including empty ones, with total membership counts."""
+    with Database(ctx.obj["config"].db) as library:
+        groups = library.list_groups()
+        emit(
+            ctx,
+            groups,
+            [f"{g['id']}  {g['name']}  ({g['item_count']} items)" for g in groups]
+            or ["No groups found."],
+        )
+
+
+@group_app.command("rename")
+@handled
+def group_rename(ctx: typer.Context, group: str, name: str):
+    """Rename a group, preserving its ID and membership."""
+    with Database(ctx.obj["config"].db) as library:
+        show_group(ctx, library.rename_group(group, name))
+
+
+@group_app.command("delete")
+@handled
+def group_delete(ctx: typer.Context, group: str):
+    """Delete the group and its memberships; retain every library item and note."""
+    with Database(ctx.obj["config"].db) as library:
+        deleted = library.delete_group(group)
+        emit(ctx, deleted, [f"Deleted group {deleted['name']}; library items retained."])
+
+
+@group_app.command("add")
+@handled
+def group_add(
+    ctx: typer.Context,
+    group: str,
+    queries: list[str] = typer.Argument(
+        ..., help="Saved item IDs, unique prefixes, or title fragments."
+    ),
+):
+    """Add saved items to a group; repeated membership is a no-op."""
+    with Database(ctx.obj["config"].db) as library:
+        item_ids = [library.get(query)["id"] for query in queries]
+        show_group(ctx, library.add_to_group(group, item_ids))
+
+
+@group_app.command("remove")
+@handled
+def group_remove(
+    ctx: typer.Context,
+    group: str,
+    queries: list[str] = typer.Argument(
+        ..., help="Saved item IDs, unique prefixes, or title fragments."
+    ),
+):
+    """Remove membership only, retaining items in the library and other groups."""
+    with Database(ctx.obj["config"].db) as library:
+        item_ids = [library.get(query)["id"] for query in queries]
+        show_group(ctx, library.remove_from_group(group, item_ids))

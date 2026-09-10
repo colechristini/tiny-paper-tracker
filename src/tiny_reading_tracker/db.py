@@ -12,7 +12,7 @@ from typing import Any, Self
 
 from .models import ResolvedItem
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 VALID_STATUSES = {"unread", "read"}
 
 
@@ -30,6 +30,10 @@ class ItemNotFoundError(DatabaseError):
 
 class AmbiguousItemError(DatabaseError):
     """Raised when a lookup matches more than one item."""
+
+
+class GroupNotFoundError(DatabaseError):
+    """Raised when no group matches an exact ID or name lookup."""
 
 
 def _now() -> str:
@@ -59,6 +63,26 @@ def _tags(values: Iterable[str]) -> list[str]:
         if tag not in seen:
             result.append(tag)
             seen.add(tag)
+    return result
+
+
+def _group_name(value: str) -> tuple[str, str]:
+    name = str(value).strip()
+    if not name:
+        raise DatabaseError("group name must not be empty")
+    return name, name.casefold()
+
+
+def _group_queries(values: Iterable[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        query = str(value).strip()
+        if not query:
+            raise DatabaseError("group query must not be empty")
+        if query not in seen:
+            result.append(query)
+            seen.add(query)
     return result
 
 
@@ -104,14 +128,19 @@ class Database:
             self._connection = None
 
     def _create_schema(self) -> None:
-        version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (0, SCHEMA_VERSION):
-            raise DatabaseError(
-                f"unsupported database schema version {version}; expected {SCHEMA_VERSION}"
-            )
-        self.connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS items (
+        try:
+            self._begin()
+            version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
+            if version not in (0, 1, SCHEMA_VERSION):
+                raise DatabaseError(
+                    f"unsupported database schema version {version}; expected {SCHEMA_VERSION}"
+                )
+            if version == SCHEMA_VERSION:
+                self.connection.commit()
+                return
+            if version == 0:
+                self.connection.execute("""
+                CREATE TABLE items (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 url TEXT NOT NULL,
@@ -125,27 +154,58 @@ class Database:
                 added_at TEXT NOT NULL,
                 read_at TEXT,
                 note_path TEXT
-            );
-            CREATE TABLE IF NOT EXISTS identifiers (
+                )
+                """)
+                self.connection.execute("""
+                CREATE TABLE identifiers (
                 scheme TEXT NOT NULL,
                 value TEXT NOT NULL,
                 item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
                 PRIMARY KEY (scheme, value)
-            );
-            CREATE TABLE IF NOT EXISTS tags (
+                )
+                """)
+                self.connection.execute("""
+                CREATE TABLE tags (
                 name TEXT PRIMARY KEY
-            );
-            CREATE TABLE IF NOT EXISTS item_tags (
+                )
+                """)
+                self.connection.execute("""
+                CREATE TABLE item_tags (
                 item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
                 tag TEXT NOT NULL REFERENCES tags(name) ON DELETE CASCADE,
                 PRIMARY KEY (item_id, tag)
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS item_search USING fts5(
+                )
+                """)
+                self.connection.execute("""
+                CREATE VIRTUAL TABLE item_search USING fts5(
                 item_id UNINDEXED, title, authors, venue, tags
-            );
-            PRAGMA user_version = 1;
-            """
-        )
+                )
+                """)
+            if version < 2:
+                self.connection.execute("""
+                CREATE TABLE groups (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    name_key TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                )
+                """)
+                self.connection.execute("""
+                CREATE TABLE item_groups (
+                    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    PRIMARY KEY (group_id, item_id)
+                )
+                """)
+                self.connection.execute(
+                    "CREATE INDEX item_groups_item_id_idx ON item_groups(item_id)"
+                )
+            self.connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            self.connection.commit()
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
 
     def _begin(self) -> None:
         self.connection.execute("BEGIN IMMEDIATE")
@@ -161,7 +221,12 @@ class Database:
                 found.add(str(row[0]))
         return found
 
-    def add(self, item: ResolvedItem, tags: list[str] | None = None) -> tuple[dict[str, Any], bool]:
+    def add(
+        self,
+        item: ResolvedItem,
+        tags: list[str] | None = None,
+        groups: list[str] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
         title = item.title.strip()
         url = item.url.strip()
         kind = item.kind.strip()
@@ -170,8 +235,10 @@ class Database:
             raise DatabaseError("title, URL, kind, and source must not be empty")
         identifiers = _identifiers(item.identifiers)
         tag_names = _tags(tags or [])
+        group_queries = _group_queries(groups or [])
         try:
             self._begin()
+            group_ids = [self._resolve_group(query)["id"] for query in group_queries]
             matching = self._matching_ids(identifiers)
             if len(matching) > 1:
                 raise IdentityConflictError(
@@ -217,6 +284,7 @@ class Database:
                         f"identifier {scheme}:{value} belongs to another item"
                     )
             self._add_tags(item_id, tag_names)
+            self._add_group_memberships(item_id, group_ids)
             self._refresh_search(item_id)
             self.connection.commit()
         except Exception:
@@ -231,6 +299,172 @@ class Database:
             self.connection.execute(
                 "INSERT OR IGNORE INTO item_tags (item_id, tag) VALUES (?, ?)", (item_id, tag)
             )
+
+    def _add_group_memberships(self, item_id: str, group_ids: Iterable[str]) -> None:
+        for group_id in group_ids:
+            self.connection.execute(
+                "INSERT OR IGNORE INTO item_groups (group_id, item_id) VALUES (?, ?)",
+                (group_id, item_id),
+            )
+
+    def _group_query(self) -> str:
+        return """
+            SELECT g.id, g.name, g.name_key, g.created_at, COUNT(ig.item_id) AS item_count
+            FROM groups AS g
+            LEFT JOIN item_groups AS ig ON ig.group_id = g.id
+        """
+
+    @staticmethod
+    def _row_to_group(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "created_at": row["created_at"],
+            "item_count": row["item_count"],
+        }
+
+    def _resolve_group(self, query: str) -> dict[str, Any]:
+        query, name_key = _group_name(query)
+        row = self.connection.execute(
+            self._group_query() + " WHERE g.id = ? GROUP BY g.id", (query,)
+        ).fetchone()
+        if row is None:
+            row = self.connection.execute(
+                self._group_query() + " WHERE g.name_key = ? GROUP BY g.id", (name_key,)
+            ).fetchone()
+        if row is None:
+            raise GroupNotFoundError(f"group not found: {query}")
+        return self._row_to_group(row)
+
+    def create_group(self, name: str) -> dict[str, Any]:
+        name, name_key = _group_name(name)
+        try:
+            self._begin()
+            if self.connection.execute("SELECT 1 FROM groups WHERE id = ?", (name_key,)).fetchone():
+                raise DatabaseError("group name conflicts with an existing group ID")
+            while True:
+                group_id = f"grp_{uuid.uuid4()}"
+                if (
+                    self.connection.execute(
+                        "SELECT 1 FROM groups WHERE name_key = ?", (group_id.casefold(),)
+                    ).fetchone()
+                    is None
+                ):
+                    break
+            self.connection.execute(
+                "INSERT INTO groups (id, name, name_key, created_at) VALUES (?, ?, ?, ?)",
+                (group_id, name, name_key, _now()),
+            )
+            result = self._resolve_group(group_id)
+            self.connection.commit()
+            return result
+        except sqlite3.IntegrityError:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise DatabaseError(f"group already exists: {name}") from None
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+
+    def get_group(self, query: str) -> dict[str, Any]:
+        return self._resolve_group(query)
+
+    def list_groups(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            self._group_query() + " GROUP BY g.id ORDER BY g.name_key, g.id"
+        )
+        return [self._row_to_group(row) for row in rows]
+
+    def rename_group(self, query: str, name: str) -> dict[str, Any]:
+        name, name_key = _group_name(name)
+        try:
+            self._begin()
+            group_id = self._resolve_group(query)["id"]
+            conflicting_id = self.connection.execute(
+                "SELECT id FROM groups WHERE id = ? AND id <> ?", (name_key, group_id)
+            ).fetchone()
+            if conflicting_id is not None:
+                raise DatabaseError("group name conflicts with an existing group ID")
+            self.connection.execute(
+                "UPDATE groups SET name = ?, name_key = ? WHERE id = ?",
+                (name, name_key, group_id),
+            )
+            result = self._resolve_group(group_id)
+            self.connection.commit()
+            return result
+        except sqlite3.IntegrityError:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise DatabaseError(f"group already exists: {name}") from None
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+
+    def delete_group(self, query: str) -> dict[str, Any]:
+        try:
+            self._begin()
+            result = self._resolve_group(query)
+            self.connection.execute("DELETE FROM groups WHERE id = ?", (result["id"],))
+            self.connection.commit()
+            return result
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+
+    def _validate_item_ids(self, item_ids: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(str(item_id).strip() for item_id in item_ids))
+        if any(not item_id for item_id in normalized):
+            raise DatabaseError("item IDs must not be empty")
+        if not normalized:
+            return normalized
+        placeholders = ", ".join("?" for _ in normalized)
+        found = {
+            row[0]
+            for row in self.connection.execute(
+                f"SELECT id FROM items WHERE id IN ({placeholders})", normalized
+            )
+        }
+        missing = [item_id for item_id in normalized if item_id not in found]
+        if missing:
+            raise ItemNotFoundError(f"item not found: {', '.join(missing)}")
+        return normalized
+
+    def add_to_group(self, query: str, item_ids: list[str]) -> dict[str, Any]:
+        try:
+            self._begin()
+            group_id = self._resolve_group(query)["id"]
+            normalized = self._validate_item_ids(item_ids)
+            self.connection.executemany(
+                "INSERT OR IGNORE INTO item_groups (group_id, item_id) VALUES (?, ?)",
+                ((group_id, item_id) for item_id in normalized),
+            )
+            result = self._resolve_group(group_id)
+            self.connection.commit()
+            return result
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+
+    def remove_from_group(self, query: str, item_ids: list[str]) -> dict[str, Any]:
+        try:
+            self._begin()
+            group_id = self._resolve_group(query)["id"]
+            normalized = self._validate_item_ids(item_ids)
+            self.connection.executemany(
+                "DELETE FROM item_groups WHERE group_id = ? AND item_id = ?",
+                ((group_id, item_id) for item_id in normalized),
+            )
+            result = self._resolve_group(group_id)
+            self.connection.commit()
+            return result
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
 
     def _refresh_search(self, item_id: str) -> None:
         row = self.connection.execute(
@@ -264,7 +498,11 @@ class Database:
                    )), '[]') AS tags_json,
                    COALESCE((SELECT json_group_array(json_object('scheme', scheme, 'value', value))
                        FROM (SELECT scheme, value FROM identifiers
-                             WHERE item_id = i.id ORDER BY scheme, value)), '[]') AS identifiers_json
+                             WHERE item_id = i.id ORDER BY scheme, value)), '[]') AS identifiers_json,
+                   COALESCE((SELECT json_group_array(json_object('id', id, 'name', name))
+                       FROM (SELECT g.id, g.name FROM groups AS g
+                             JOIN item_groups AS ig ON ig.group_id = g.id
+                             WHERE ig.item_id = i.id ORDER BY g.name_key, g.id)), '[]') AS groups_json
             FROM items AS i
         """
 
@@ -292,6 +530,7 @@ class Database:
         value["identifiers"] = [
             (entry["scheme"], entry["value"]) for entry in json.loads(row["identifiers_json"])
         ]
+        value["groups"] = json.loads(row["groups_json"])
         return value
 
     def _get_id(self, item_id: str) -> dict[str, Any]:
@@ -306,11 +545,13 @@ class Database:
         tag: str | None = None,
         kind: str | None = None,
         no_note: bool = False,
+        group: str | None = None,
     ) -> list[dict[str, Any]]:
         if status is not None and status not in VALID_STATUSES:
             raise DatabaseError(f"invalid status: {status}")
         clauses: list[str] = []
         parameters: list[Any] = []
+        group_id = self._resolve_group(group)["id"] if group is not None else None
         if status is not None:
             clauses.append("i.status = ?")
             parameters.append(status)
@@ -322,15 +563,23 @@ class Database:
             parameters.append(tag)
         if no_note:
             clauses.append("i.note_path IS NULL")
+        if group_id is not None:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM item_groups ig WHERE ig.item_id=i.id AND ig.group_id=?)"
+            )
+            parameters.append(group_id)
         sql = self._item_query()
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY i.added_at DESC, i.id DESC"
         return [self._row_to_item(row) for row in self.connection.execute(sql, parameters)]
 
-    def search(self, query: str, status: str | None = None) -> list[dict[str, Any]]:
+    def search(
+        self, query: str, status: str | None = None, group: str | None = None
+    ) -> list[dict[str, Any]]:
         if status is not None and status not in VALID_STATUSES:
             raise DatabaseError(f"invalid status: {status}")
+        group_id = self._resolve_group(group)["id"] if group is not None else None
         expression = query.strip()
         if not expression:
             return []
@@ -341,6 +590,11 @@ class Database:
         if status is not None:
             sql += " AND i.status = ?"
             parameters.append(status)
+        if group_id is not None:
+            sql += (
+                " AND EXISTS (SELECT 1 FROM item_groups ig WHERE ig.item_id=i.id AND ig.group_id=?)"
+            )
+            parameters.append(group_id)
         sql += " ORDER BY bm25(item_search), i.added_at DESC, i.id DESC"
         try:
             rows = self.connection.execute(sql, parameters)

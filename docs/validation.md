@@ -50,3 +50,21 @@ metadata-provider or HTML fallback, automatic note-move detection, existing
 library migration, or automatic record merging. Notes are append-only through
 the CLI; filesystem changes and SQLite updates are not one atomic transaction.
 Configure your actual vault before using notes. Stop here for user review.
+
+## Post-release increment: paper groups — 0.2.0.dev0
+
+The original code and skill were pushed to
+`colechristini/tiny-paper-tracker` and published as `v0.1.0`, with wheel and source
+archives. Both Linux Python 3.11/3.13 CI jobs passed for that release commit.
+
+The subsequent group feature was validated with **69 passing tests**, including
+an existing schema-v1 fixture, concurrent migration, Unicode group-name
+uniqueness, ID/name collision protection, atomic memberships, deduplication,
+filters, and preservation of items/notes after group removal and deletion.
+Ruff lint/format checks, package build, and the updated agent-skill validator pass.
+
+The expanded live smoke test passed: 11 inputs, 8 new items, 3 duplicates, with
+the original reading/note workflow plus group creation, membership, filtering,
+rename, removal, and deletion. The ingestion portion took 1.02 seconds on the
+running server. Data and notes were temporary. Groups are flat local collections;
+the v0.1.0 release remains unchanged. Schema-v2 databases require the new CLI.

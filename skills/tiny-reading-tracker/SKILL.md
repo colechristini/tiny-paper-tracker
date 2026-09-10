@@ -1,6 +1,6 @@
 ---
 name: tiny-reading-tracker
-description: Save papers, blogs, and other resources to the Tiny Reading Tracker SQLite library using lit; search its queue, mark items read or unread, and create linked Obsidian notes. Use for Tiny Reading Tracker or lit requests and follow-ups in an established tracker workflow. Explicit Zotero-library requests use the separate reading-library workflow.
+description: Save and organize papers, blogs, and other resources in the Tiny Reading Tracker SQLite library using lit; manage paper groups, search its queue, track read status, and create linked Obsidian notes. Use for Tiny Reading Tracker or lit requests and follow-ups in an established tracker workflow. Explicit Zotero-library requests use the separate reading-library workflow.
 ---
 
 # Tiny Reading Tracker
@@ -64,6 +64,35 @@ unless `--read` is supplied and returns an array of items. Search uses FTS5
 syntax; quote phrases and punctuation-bearing terms inside the query string.
 It indexes titles, authors, venues, and tags, not note contents. Search a returned
 note path separately when the request concerns the user's writing.
+
+## Paper groups
+
+Groups are named collections; an item may belong to several while keeping one
+shared read status and note. Use the user's intended group names. Create a new
+group when requested or necessary for a requested grouping; first check
+`lit --json group ls` for an existing exact case-insensitive match.
+
+```sh
+lit --json group create 'Journal Club'
+lit --json group ls
+lit --json add https://arxiv.org/abs/1706.03762 --group 'Journal Club'
+lit --json group add 'Journal Club' FULL_ITEM_ID
+lit --json ls --all --group 'Journal Club'
+lit --json search attention --group 'Journal Club'
+lit --json group rename 'Journal Club' 'Friday Reading'
+lit --json group remove 'Friday Reading' FULL_ITEM_ID
+lit --json group delete 'Friday Reading'
+```
+
+Groups must exist before `add --group`; repeat the flag for multiple groups.
+Group selectors are exact names or full stable IDs, not fuzzy title matches.
+Membership add/remove commands accept multiple saved-item selectors and are
+idempotent; invalid/ambiguous items abort the membership operation. Removing a
+membership or deleting a group retains library items and notes. Do not interpret
+“remove from this group” as deleting the resource. `group ls` returns all groups
+including empty ones with total `item_count`; item JSON includes `groups`.
+Groups are flat and local, not nested or shared libraries. These commands require
+the checkout's post-v0.1.0 version; use the documented project prefix.
 
 ## Status and notes
 

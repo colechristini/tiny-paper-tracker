@@ -4,7 +4,9 @@ A local reading library for papers, blogs, and other web resources. SQLite owns
 metadata and read status; your Obsidian vault owns your writing. Zotero's
 Translation Server resolves metadata without the Zotero desktop app.
 
-This is **v0**: six CLI commands, no tracker web API or browser extension.
+The published **v0.1.0** provides the original six-command workflow. Current
+`main` is **0.2.0.dev0**, adding paper groups. There is no tracker web API or
+browser extension.
 
 ## Quick start
 
@@ -89,6 +91,45 @@ Title lookups are case-insensitive substrings; ambiguous matches fail with
 candidates rather than marking an arbitrary item. Repeated `read` preserves the
 original read timestamp; `unread` clears it. Notes are optional and do not change
 read status. `--no-note` means no registered note path, not a vault scan.
+
+## Paper groups
+
+Groups are flat, named collections for organizing any saved resource. One item
+can belong to multiple groups, and its read status and note remain shared across
+those groups. Tags remain independent topic labels.
+
+```sh
+lit group create "Journal Club"
+lit group create "Attention"
+lit group ls                            # includes empty groups and total item counts
+lit add https://arxiv.org/abs/1706.03762 --group "Journal Club" --group "Attention"
+lit group add "Journal Club" "Diffusion Study" lit_ITEM_ID
+lit ls --group "Journal Club"            # unread members
+lit ls --all --group "Journal Club"      # all members
+lit search attention --group "Journal Club" --read
+lit group rename "Journal Club" "Friday Reading"
+lit group remove "Friday Reading" lit_ITEM_ID
+lit group delete "Friday Reading"
+```
+
+Create a group before passing `--group`; unknown groups fail before ingestion.
+Re-adding a saved URL with `--group` attaches the existing item without resetting
+its state. Group names are trimmed and case-insensitively unique; commands
+accept an exact name or full group ID. Rename preserves the ID and memberships.
+Item selectors use the same IDs, unique prefixes, and unambiguous title fragments
+as `lit read`. A multi-item membership operation fails without partial changes
+if any selector is invalid or ambiguous. Repeated add/remove membership is safe.
+
+Removing an item from a group keeps it in the library and other groups. Deleting
+a group removes only that group and its memberships, preserving all papers and
+notes. JSON item output includes `groups: [{id, name}]`. Group names are filters,
+not additional FTS search fields. Nested collections and shared group libraries
+are not implemented.
+
+Existing databases automatically migrate from schema 1 to schema 2 in a
+transaction when opened. Existing metadata, tags, notes, and reading state are
+preserved. The v0.1.0 CLI cannot open the upgraded database; retain a backup if
+you need to return to the older release.
 
 ## Ingestion and identity
 

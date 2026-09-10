@@ -48,7 +48,7 @@ def test_schema_durability_and_context_close(tmp_path: Path) -> None:
 
     with Database(path) as reopened:
         assert reopened.get(saved["id"])["title"] == "Practical SQLite"
-        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert reopened.connection.execute("PRAGMA user_version").fetchone()[0] == 2
         assert reopened.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert reopened.connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 

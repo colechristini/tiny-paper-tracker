@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import pytest
+
+from tiny_reading_tracker.db import Database, DatabaseError, GroupNotFoundError, ItemNotFoundError
+from tiny_reading_tracker.models import ResolvedItem
+
+
+def article(title: str, identifier: str) -> ResolvedItem:
+    return ResolvedItem(
+        title=title,
+        url=f"https://example.test/{identifier}",
+        kind="journalArticle",
+        authors=["Ada Lovelace"],
+        venue="Database Journal",
+        published_at="2025-01-02",
+        source="test",
+        metadata={"abstract": "Useful"},
+        identifiers=[("doi", identifier)],
+    )
+
+
+def create_v1_database(path: Path) -> None:
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE items (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            url TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            authors TEXT NOT NULL,
+            venue TEXT,
+            published_at TEXT,
+            source TEXT NOT NULL,
+            metadata TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('unread', 'read')),
+            added_at TEXT NOT NULL,
+            read_at TEXT,
+            note_path TEXT
+        );
+        CREATE TABLE identifiers (
+            scheme TEXT NOT NULL,
+            value TEXT NOT NULL,
+            item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            PRIMARY KEY (scheme, value)
+        );
+        CREATE TABLE tags (name TEXT PRIMARY KEY);
+        CREATE TABLE item_tags (
+            item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            tag TEXT NOT NULL REFERENCES tags(name) ON DELETE CASCADE,
+            PRIMARY KEY (item_id, tag)
+        );
+        CREATE VIRTUAL TABLE item_search USING fts5(
+            item_id UNINDEXED, title, authors, venue, tags
+        );
+        PRAGMA user_version = 1;
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO items VALUES (
+            'lit_existing', 'Existing Paper', 'https://example.test/existing',
+            'journalArticle', ?, 'Old Journal', '2024-01-01', 'test', ?,
+            'read', '2024-02-01T00:00:00+00:00', '2024-02-02T00:00:00+00:00',
+            'Reading/existing.md'
+        )
+        """,
+        (json.dumps(["Existing Author"]), json.dumps({"legacy": True})),
+    )
+    connection.execute("INSERT INTO identifiers VALUES ('doi', 'legacy', 'lit_existing')")
+    connection.execute("INSERT INTO tags VALUES ('preserved')")
+    connection.execute("INSERT INTO item_tags VALUES ('lit_existing', 'preserved')")
+    connection.execute(
+        "INSERT INTO item_search VALUES (?, ?, ?, ?, ?)",
+        ("lit_existing", "Existing Paper", "Existing Author", "Old Journal", "preserved"),
+    )
+    connection.commit()
+    connection.close()
+
+
+def test_v1_migration_preserves_all_item_state_and_fts(tmp_path: Path) -> None:
+    path = tmp_path / "v1.sqlite"
+    create_v1_database(path)
+
+    with Database(path) as db:
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        item = db.get("lit_existing")
+        assert item["authors"] == ["Existing Author"]
+        assert item["metadata"] == {"legacy": True}
+        assert item["identifiers"] == [("doi", "legacy")]
+        assert item["tags"] == ["preserved"]
+        assert item["status"] == "read"
+        assert item["read_at"] == "2024-02-02T00:00:00+00:00"
+        assert item["note_path"] == "Reading/existing.md"
+        assert item["groups"] == []
+        assert [found["id"] for found in db.search('"Existing Paper"')] == ["lit_existing"]
+        assert db.list_groups() == []
+
+
+def test_concurrent_v1_migration_is_serialized(tmp_path: Path) -> None:
+    path = tmp_path / "concurrent-v1.sqlite"
+    create_v1_database(path)
+
+    def open_database(_: int) -> int:
+        with Database(path) as db:
+            return db.connection.execute("PRAGMA user_version").fetchone()[0]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        assert list(executor.map(open_database, range(8))) == [2] * 8
+
+
+def test_new_schema_and_future_schema_rejection(tmp_path: Path) -> None:
+    path = tmp_path / "new.sqlite"
+    with Database(path) as db:
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        indexes = {
+            row["name"]
+            for row in db.connection.execute("PRAGMA index_list('item_groups')").fetchall()
+        }
+        assert "item_groups_item_id_idx" in indexes
+
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA user_version = 3")
+    connection.close()
+    with pytest.raises(DatabaseError, match="unsupported database schema version 3"):
+        Database(path)
+
+
+def test_group_names_are_trimmed_unicode_casefolded_and_exact(tmp_path: Path) -> None:
+    with Database(tmp_path / "db.sqlite") as db:
+        group = db.create_group("  Straße  ")
+        assert group["id"].startswith("grp_")
+        assert group["name"] == "Straße"
+        assert group["item_count"] == 0
+        assert db.get_group("STRASSE") == group
+        assert db.get_group(group["id"]) == group
+        with pytest.raises(DatabaseError, match="already exists"):
+            db.create_group("strasse")
+        other = db.create_group("Other")
+        with pytest.raises(DatabaseError, match="conflicts with an existing group ID"):
+            db.create_group(group["id"])
+        with pytest.raises(DatabaseError, match="conflicts with an existing group ID"):
+            db.rename_group(other["id"], group["id"])
+        with pytest.raises(GroupNotFoundError):
+            db.get_group("Stra")
+        with pytest.raises(DatabaseError, match="must not be empty"):
+            db.create_group("   ")
+
+
+def test_memberships_are_multiple_idempotent_and_rename_is_live(tmp_path: Path) -> None:
+    with Database(tmp_path / "db.sqlite") as db:
+        first_group = db.create_group("Methods")
+        second_group = db.create_group("Favorites")
+        first, _ = db.add(article("First", "first"), groups=[first_group["id"], "favorites"])
+        second, _ = db.add(article("Second", "second"))
+
+        assert first["groups"] == [
+            {"id": second_group["id"], "name": "Favorites"},
+            {"id": first_group["id"], "name": "Methods"},
+        ]
+        result = db.add_to_group("METHODS", [first["id"], second["id"], first["id"]])
+        assert result["item_count"] == 2
+        assert db.add_to_group(first_group["id"], [second["id"]])["item_count"] == 2
+
+        renamed = db.rename_group("methods", "Core Methods")
+        assert renamed["id"] == first_group["id"]
+        assert renamed["item_count"] == 2
+        assert {entry["id"]: entry["name"] for entry in db.get(first["id"])["groups"]}[
+            first_group["id"]
+        ] == "Core Methods"
+        with pytest.raises(GroupNotFoundError):
+            db.get_group("Methods")
+
+
+def test_membership_changes_validate_all_items_before_writing(tmp_path: Path) -> None:
+    with Database(tmp_path / "db.sqlite") as db:
+        db.create_group("Queue")
+        first, _ = db.add(article("First", "first"))
+        second, _ = db.add(article("Second", "second"))
+
+        with pytest.raises(ItemNotFoundError):
+            db.add_to_group("Queue", [first["id"], "lit_missing"])
+        assert db.get_group("Queue")["item_count"] == 0
+
+        db.add_to_group("Queue", [first["id"], second["id"]])
+        with pytest.raises(ItemNotFoundError):
+            db.remove_from_group("Queue", [first["id"], "lit_missing"])
+        assert db.get_group("Queue")["item_count"] == 2
+        assert db.remove_from_group("Queue", [first["id"], first["id"]])["item_count"] == 1
+        assert db.remove_from_group("Queue", [first["id"]])["item_count"] == 1
+
+
+def test_group_filters_status_dedup_and_delete_preserve_items(tmp_path: Path) -> None:
+    with Database(tmp_path / "db.sqlite") as db:
+        group = db.create_group("Reading Group")
+        first, _ = db.add(article("Systems Paper", "systems"), ["database"], ["reading group"])
+        db.set_status(first["id"], "read")
+        db.set_note_path(first["id"], "Reading/systems.md")
+        duplicate, created = db.add(
+            article("Replacement", "systems"), groups=[group["id"], "READING GROUP"]
+        )
+        second, _ = db.add(article("Other Systems", "other"))
+
+        assert not created
+        assert duplicate["id"] == first["id"]
+        assert db.get_group("Reading Group")["item_count"] == 1
+        assert db.list_items(status=None, group="READING GROUP") == [duplicate]
+        assert db.list_items(status="unread", group=group["id"]) == []
+        assert [item["id"] for item in db.search("Systems", group="Reading Group")] == [first["id"]]
+        assert db.search("Systems", status="unread", group="Reading Group") == []
+        with pytest.raises(GroupNotFoundError):
+            db.list_items(status=None, group="missing")
+        with pytest.raises(GroupNotFoundError):
+            db.search("Systems", group="missing")
+
+        deleted = db.delete_group(group["id"])
+        assert deleted["item_count"] == 1
+        assert db.list_groups() == []
+        preserved = db.get(first["id"])
+        assert preserved["status"] == "read"
+        assert preserved["note_path"] == "Reading/systems.md"
+        assert preserved["tags"] == ["database"]
+        assert preserved["groups"] == []
+        assert db.get(second["id"])["title"] == "Other Systems"
