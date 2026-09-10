@@ -299,7 +299,10 @@ fn draw_editor(frame: &mut Frame, app: &App) {
 }
 fn list_state(app: &App) -> ratatui::widgets::ListState {
     let mut state = ratatui::widgets::ListState::default();
-    if !app.display_rows.is_empty() {
+    if matches!(
+        app.display_rows.get(app.selected),
+        Some(crate::state::DisplayRow::Item(_))
+    ) {
         state.select(Some(app.selected));
     }
     state
@@ -449,6 +452,8 @@ mod tests {
     use crate::{
         editor::TextBuffer,
         model::Group,
+        model::{Item, Section},
+        state::DisplayRow,
         state::{App, EditorState},
     };
     use ratatui::{
@@ -547,5 +552,61 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(text.contains("Error: visible error"));
+    }
+
+    #[test]
+    fn stacked_sections_render_headers_counts_and_empty_marker() {
+        let item = Item {
+            id: "loose".into(),
+            title: "Loose paper".into(),
+            url: String::new(),
+            kind: String::new(),
+            authors: vec![],
+            venue: None,
+            published_at: None,
+            status: "unread".into(),
+            added_at: None,
+            read_at: None,
+            note_path: None,
+            tags: vec![],
+            groups: vec![],
+            identifiers: vec![],
+            metadata: serde_json::Value::Null,
+        };
+        let app = App {
+            items: vec![item],
+            sections: vec![
+                Section {
+                    id: None,
+                    title: String::new(),
+                    item_ids: vec!["loose".into()],
+                },
+                Section {
+                    id: Some("child".into()),
+                    title: "Child".into(),
+                    item_ids: vec![],
+                },
+            ],
+            display_rows: vec![
+                DisplayRow::Item(0),
+                DisplayRow::Header(Some("child".into())),
+                DisplayRow::Empty,
+            ],
+            ..Default::default()
+        };
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Loose paper"));
+        assert!(text.contains("Child (0)"));
+        assert!(text.contains("(empty)"));
+        assert!(!text.contains("General"));
     }
 }

@@ -375,6 +375,26 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item(id: &str) -> Item {
+        Item {
+            id: id.into(),
+            title: format!("Paper {id}"),
+            url: String::new(),
+            kind: String::new(),
+            authors: vec![],
+            venue: None,
+            published_at: None,
+            status: "unread".into(),
+            added_at: None,
+            read_at: None,
+            note_path: None,
+            tags: vec![],
+            groups: vec![],
+            identifiers: vec![],
+            metadata: serde_json::Value::Null,
+        }
+    }
     #[test]
     fn selection_wraps() {
         let mut app = App {
@@ -438,5 +458,101 @@ mod tests {
         app.group = Some("stale".into());
         app.cycle_group(-1);
         assert_eq!(app.group.as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn subgroup_rows_skip_headers_and_empty_sections_and_keep_loose_item_first() {
+        let mut app = App {
+            items: vec![item("loose"), item("child-a")],
+            sections: vec![
+                Section {
+                    id: None,
+                    title: String::new(),
+                    item_ids: vec!["loose".into()],
+                },
+                Section {
+                    id: Some("one".into()),
+                    title: "One".into(),
+                    item_ids: vec!["child-a".into()],
+                },
+                Section {
+                    id: Some("two".into()),
+                    title: "Two".into(),
+                    item_ids: vec![],
+                },
+            ],
+            ..Default::default()
+        };
+        app.rebuild_display_rows();
+        assert_eq!(
+            app.display_rows,
+            vec![
+                DisplayRow::Item(0),
+                DisplayRow::Header(Some("one".into())),
+                DisplayRow::Item(1),
+                DisplayRow::Header(Some("two".into())),
+                DisplayRow::Empty,
+            ]
+        );
+        assert_eq!(app.selected, 0);
+        assert_eq!(app.selected_item().unwrap().id, "loose");
+        app.move_selection(1);
+        assert_eq!(app.selected, 2);
+        app.move_selection(1);
+        assert_eq!(app.selected, 0);
+        app.move_selection(-1);
+        assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn duplicate_occurrence_restores_by_item_and_section() {
+        let mut app = App {
+            items: vec![item("paper")],
+            sections: vec![
+                Section {
+                    id: Some("one".into()),
+                    title: "One".into(),
+                    item_ids: vec!["paper".into()],
+                },
+                Section {
+                    id: Some("two".into()),
+                    title: "Two".into(),
+                    item_ids: vec!["paper".into()],
+                },
+            ],
+            ..Default::default()
+        };
+        app.rebuild_display_rows();
+        app.selected = 3;
+        assert_eq!(app.selected_item().unwrap().id, "paper");
+        let key = app.selected_key();
+        app.sections.reverse();
+        app.rebuild_display_rows();
+        app.restore_selection(key);
+        assert_eq!(app.selected, 1);
+        assert_eq!(app.selected_item().unwrap().id, "paper");
+    }
+
+    #[test]
+    fn group_cycle_ignores_child_groups() {
+        let mut app = App {
+            groups: vec![
+                Group {
+                    id: "root".into(),
+                    name: "Root".into(),
+                    parent_id: None,
+                },
+                Group {
+                    id: "child".into(),
+                    name: "Child".into(),
+                    parent_id: Some("root".into()),
+                },
+            ],
+            ..Default::default()
+        };
+        app.cycle_group(1);
+        assert_eq!(app.group.as_deref(), Some("root"));
+        app.cycle_group(1);
+        assert_eq!(app.group, None);
     }
 }
