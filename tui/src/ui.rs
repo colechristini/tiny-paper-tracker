@@ -4,7 +4,7 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
@@ -182,6 +182,45 @@ fn draw_editor(frame: &mut Frame, app: &App) {
             .block(Block::default().borders(Borders::ALL)),
         editor_area[1],
     );
+    if let Some(completion) = &editor.completion {
+        let entries = if completion.candidates.is_empty() {
+            vec![Line::from("No matching titles · Tab inserts spaces")]
+        } else {
+            completion
+                .candidates
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    Line::from(format!(
+                        "{}{}",
+                        if i == completion.selected {
+                            "› "
+                        } else {
+                            "  "
+                        },
+                        sanitize(&c.title)
+                    ))
+                })
+                .collect()
+        };
+        let popup_height = (entries.len() as u16 + 2).min(editor_area[1].height);
+        let popup = Rect {
+            x: editor_area[1].x + 1,
+            y: editor_area[1].y + 1,
+            width: editor_area[1].width.saturating_sub(2),
+            height: popup_height,
+        };
+        frame.render_widget(
+            Paragraph::new(entries)
+                .block(
+                    Block::default()
+                        .title(" Links · Tab insert · Esc cancel ")
+                        .borders(Borders::ALL),
+                )
+                .style(Style::default().bg(Color::Black)),
+            popup,
+        );
+    }
     let cursor_y = editor_area[1]
         .y
         .saturating_add(1)
@@ -326,6 +365,7 @@ mod tests {
                 preview: false,
                 rendered: None,
                 preview_scroll: 0,
+                completion: None,
             }),
             ..Default::default()
         };

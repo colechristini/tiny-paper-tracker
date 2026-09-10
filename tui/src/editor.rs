@@ -13,6 +13,11 @@ impl TextBuffer {
     pub fn text(&self) -> String {
         self.text.iter().collect()
     }
+    pub fn replace_range(&mut self, start: usize, end: usize, value: &str) {
+        self.text
+            .splice(start..end.min(self.text.len()), value.chars());
+        self.cursor = start + value.chars().count();
+    }
     pub fn insert(&mut self, value: &str) {
         let chars: Vec<char> = value.chars().collect();
         self.text

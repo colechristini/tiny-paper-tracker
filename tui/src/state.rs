@@ -1,5 +1,6 @@
 use crate::{
     bridge::Bridge,
+    completion::Completion,
     editor::TextBuffer,
     model::{Group, Item},
 };
@@ -18,6 +19,7 @@ pub struct EditorState {
     pub preview: bool,
     pub rendered: Option<ratatui::text::Text<'static>>,
     pub preview_scroll: u16,
+    pub completion: Option<Completion>,
 }
 impl EditorState {
     pub fn dirty(&self) -> bool {
@@ -26,6 +28,7 @@ impl EditorState {
     pub fn mark_changed(&mut self) {
         self.dirty_since = Some(Instant::now());
         self.rendered = None;
+        self.completion = None;
     }
     pub fn toggle_preview(&mut self) {
         self.preview = !self.preview;
@@ -146,6 +149,9 @@ impl App {
         };
         match bridge.note_open(&id) {
             Ok(note) => {
+                if let Some(item) = self.items.get_mut(self.selected) {
+                    item.note_path = Some(note.path.clone());
+                }
                 self.editor = Some(EditorState {
                     item_id: id,
                     buffer: TextBuffer::new(note.text.clone()),
@@ -159,6 +165,7 @@ impl App {
                     preview: false,
                     rendered: None,
                     preview_scroll: 0,
+                    completion: None,
                 })
             }
             Err(e) => self.error = Some(e.to_string()),
