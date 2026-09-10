@@ -1,3 +1,5 @@
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -93,6 +95,8 @@ def test_external_edit_and_delete_conflict_without_overwrite(tmp_path: Path) -> 
 def test_failed_atomic_replace_preserves_original(tmp_path: Path, monkeypatch) -> None:
     note = load_note(item(), tmp_path)
     original = note.path.read_text()
+    note.path.chmod(0o640)
+    original_mode = note.path.stat().st_mode & 0o777
 
     def fail_replace(source, target):
         raise OSError("simulated replace failure")
@@ -101,6 +105,24 @@ def test_failed_atomic_replace_preserves_original(tmp_path: Path, monkeypatch) -
     with pytest.raises(NoteError, match="could not save"):
         save_note(note, "replacement\n")
     assert note.path.read_text() == original
+    assert note.path.stat().st_mode & 0o777 == original_mode
+
+
+def test_cooperating_concurrent_saves_have_one_winner(tmp_path: Path) -> None:
+    note = load_note(item(), tmp_path)
+    start = threading.Barrier(2)
+
+    def save(value: str):
+        start.wait()
+        try:
+            return save_note(note, value)
+        except NoteConflictError:
+            return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(save, ("first\n", "second\n")))
+    assert sum(result is not None for result in results) == 1
+    assert note.path.read_text() in {"first\n", "second\n"}
 
 
 def test_unicode_filename_is_bounded(tmp_path: Path) -> None:

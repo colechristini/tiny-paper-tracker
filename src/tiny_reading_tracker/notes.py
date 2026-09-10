@@ -7,10 +7,16 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows has no fcntl
+    fcntl = None
 
 
 class NoteError(ValueError):
@@ -160,8 +166,8 @@ def _frontmatter(content: str) -> dict[str, str]:
     return values
 
 
-def _validate_identity(path: Path, item_id: str) -> None:
-    values = _frontmatter(path.read_text(encoding="utf-8"))
+def _validate_identity(content: str, path: Path, item_id: str) -> None:
+    values = _frontmatter(content)
     if values.get("lit_id") != item_id:
         raise NoteError(f"existing note does not belong to {item_id}: {path}")
 
@@ -230,6 +236,27 @@ def _document(
     )
 
 
+@contextmanager
+def _writer_lock(path: Path):
+    """Serialize cooperating writers with a kernel lock, without stale lock files."""
+
+    lock_path = path.with_name(f".{path.name}.lit.lock")
+    if lock_path.is_symlink():
+        raise NoteError(f"note lock must not be a symlink: {lock_path}")
+    try:
+        handle = lock_path.open("a+", encoding="utf-8")
+    except OSError as error:
+        raise NoteError(f"could not open note lock: {error}") from error
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
 def load_note(item: dict[str, Any], notes_dir: Path, vault: Path | None = None) -> NoteDocument:
     """Load an existing note, or create a validated new note for an item."""
 
@@ -241,9 +268,9 @@ def load_note(item: dict[str, Any], notes_dir: Path, vault: Path | None = None) 
             raise NoteError(f"note must not be a symlink: {path}")
         if not path.is_file():
             raise NoteError(f"note path is not a file: {path}")
-        if registered is None:
-            _validate_identity(path, item_id)
         content, version = _read_snapshot(path)
+        if registered is None:
+            _validate_identity(content, path, item_id)
         return _document(item_id, path, content, version)
 
     if registered is not None:
@@ -258,8 +285,8 @@ def load_note(item: dict[str, Any], notes_dir: Path, vault: Path | None = None) 
     except FileExistsError:
         if path.is_symlink() or not path.is_file():
             raise NoteError("existing note is unsafe") from None
-        _validate_identity(path, item_id)
         content, version = _read_snapshot(path)
+        _validate_identity(content, path, item_id)
         return _document(item_id, path, content, version)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
@@ -285,42 +312,50 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def save_note(note: NoteDocument, content: str) -> NoteDocument:
-    """Atomically save a buffer if the note has not changed since loading."""
+    """Atomically save an unchanged buffer under a cooperative writer lock.
+
+    The lock coordinates this backend's writers. An external editor that does
+    not use the lock can still race the final check and replacement on systems
+    without a portable compare-and-swap filesystem operation.
+    """
 
     path = note.path
-    if path.is_symlink() or not path.is_file():
-        raise NoteConflictError(f"note was replaced or removed: {path}")
-    current_content, current_version = _read_snapshot(path)
-    if current_version != note.version:
-        raise NoteConflictError(f"note changed outside this editor: {path}")
-    mode = path.stat().st_mode & 0o777
-    descriptor: int | None = None
-    temporary: Path | None = None
-    try:
-        descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-        temporary = Path(temporary_name)
-        os.fchmod(descriptor, mode)
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            descriptor = None
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        _, latest_version = _read_snapshot(path)
-        if latest_version != note.version:
+    with _writer_lock(path):
+        if path.is_symlink() or not path.is_file():
+            raise NoteConflictError(f"note was replaced or removed: {path}")
+        _, current_version = _read_snapshot(path)
+        if current_version != note.version:
             raise NoteConflictError(f"note changed outside this editor: {path}")
-        os.replace(temporary, path)
-        temporary = None
-        _fsync_directory(path.parent)
-    except (OSError, UnicodeError) as error:
-        if descriptor is not None:
-            os.close(descriptor)
-        raise NoteError(f"could not save note: {error}") from error
-    finally:
-        if temporary is not None:
-            try:
-                temporary.unlink()
-            except OSError:
-                pass
+        mode = path.stat().st_mode & 0o777
+        descriptor: int | None = None
+        temporary: Path | None = None
+        try:
+            descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+            temporary = Path(temporary_name)
+            os.fchmod(descriptor, mode)
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                descriptor = None
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if path.is_symlink() or not path.is_file():
+                raise NoteConflictError(f"note was replaced or removed: {path}")
+            _, latest_version = _read_snapshot(path)
+            if latest_version != note.version:
+                raise NoteConflictError(f"note changed outside this editor: {path}")
+            os.replace(temporary, path)
+            temporary = None
+            _fsync_directory(path.parent)
+        except (OSError, UnicodeError) as error:
+            if descriptor is not None:
+                os.close(descriptor)
+            raise NoteError(f"could not save note: {error}") from error
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
     return _document(note.item_id, path, content)
 
 
