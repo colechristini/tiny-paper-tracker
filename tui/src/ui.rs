@@ -140,6 +140,12 @@ fn draw_editor(frame: &mut Frame, app: &App) {
         editor_area[0],
     );
     let text = editor.buffer.text();
+    if editor.preview {
+        let preview = editor.rendered.as_ref().expect("preview is rendered on entry");
+        frame.render_widget(Paragraph::new(preview.clone()).scroll((editor.scroll, 0)).block(Block::default().title(" Preview (Ctrl-V to edit) ").borders(Borders::ALL)), editor_area[1]);
+        frame.render_widget(Paragraph::new("Ctrl-V edit · Ctrl-S save · Esc save and return · Ctrl-E recovery · Ctrl-Q save+quit · arrows/PageUp/PageDown scroll").block(Block::default().borders(Borders::TOP)), chunks[1]);
+        return;
+    }
     let lines = text
         .split('\n')
         .map(sanitize)
@@ -298,8 +304,12 @@ mod tests {
                 created_at: Some("2026-09-10T08:00:00Z".into()),
                 modified_at: "2026-09-10T09:30:00Z".into(),
                 original: String::new(),
-                dirty_since: None,
-                scroll: 0,
+            dirty_since: None,
+            scroll: 0,
+            preview: false,
+            rendered: None,
+            preview: false,
+            rendered: None,
             }),
             ..Default::default()
         };
