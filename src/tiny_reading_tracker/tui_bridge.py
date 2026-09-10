@@ -9,6 +9,7 @@ import sys
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from .db import Database, DatabaseError
 from .notes import NoteConflictError, NoteDocument, NoteError, load_note, save_note
@@ -75,6 +76,30 @@ def _write_recovery(notes_dir: Path, item_id: str, text: str) -> Path:
     return path
 
 
+def _escape_link_label(value: str) -> str:
+    """Escape the Markdown characters that can terminate link text."""
+
+    return (
+        value.replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
+
+
+def _link_search(request: dict[str, Any], library: Database) -> dict[str, Any]:
+    query = request.get("query")
+    if not isinstance(query, str):
+        return _error("link_search requires a string query", "request")
+    folded = query.strip().casefold()
+    if not folded:
+        return _response(items=[])
+    items = [item for item in library.list_items(None) if folded in item["title"].casefold()]
+    items.sort(key=lambda item: (item["title"].casefold(), item["id"]))
+    return _response(items=[{"id": item["id"], "title": item["title"]} for item in items[:20]])
+
+
 def _list(request: dict[str, Any], library: Database) -> dict[str, Any]:
     status = request.get("status", "all")
     if status not in _STATUSES:
@@ -106,6 +131,8 @@ def _handle(
         if not isinstance(item_id, str) or not isinstance(status, str):
             return _error("set_status requires string id and status", "request")
         return _response(item=library.set_status(item_id, status))
+    if operation == "link_search":
+        return _link_search(request, library)
     if operation in {"note_open", "note_save"}:
         item_id = request.get("id")
         if not isinstance(item_id, str) or not item_id:
@@ -151,6 +178,32 @@ def _handle(
         except NoteError as exc:
             return _error(str(exc), "note")
         return _response(path=str(path))
+    if operation == "note_link":
+        item_id = request.get("id")
+        target_id = request.get("target_id")
+        if not isinstance(item_id, str) or not isinstance(target_id, str):
+            return _error("note_link requires full string item IDs", "request")
+        try:
+            current = library.get(item_id)
+            target = library.get(target_id)
+        except DatabaseError as exc:
+            return _error(str(exc), "request")
+        if current["id"] != item_id or target["id"] != target_id:
+            return _error("note_link requires full item IDs", "request")
+        active = documents.get(item_id)
+        if active is None:
+            return _error("current note must be opened before linking", "request")
+        notes_dir, vault = _notes_root()
+        try:
+            target_note = load_note(target, notes_dir, vault)
+            if not target.get("note_path"):
+                library.set_note_path(target_id, str(target_note.path))
+        except NoteError as exc:
+            return _error(str(exc), "note")
+        relative = os.path.relpath(target_note.path, start=active.path.parent)
+        encoded = quote(Path(relative).as_posix(), safe="/")
+        markdown = f"[{_escape_link_label(target['title'])}](<{encoded}>)"
+        return _response(markdown=markdown, target_path=str(target_note.path))
     return _error(f"unknown operation: {operation}", "request")
 
 

@@ -7,6 +7,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use lit_tui::completion;
 use lit_tui::{bridge::Bridge, state::App, ui};
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use std::io;
@@ -65,6 +66,9 @@ fn run(
                 Event::Paste(text) => {
                     if app.editor.as_ref().is_some_and(|e| !e.preview) {
                         app.insert_editor_text(&text);
+                        if let Some(editor) = app.editor.as_mut() {
+                            update_completion(editor, bridge);
+                        }
                     }
                     redraw = true;
                 }
@@ -155,6 +159,7 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if ctrl && key.code == KeyCode::Char('v') {
         if let Some(editor) = app.editor.as_mut() {
+            editor.completion = None;
             editor.toggle_preview();
         }
         return;
@@ -173,10 +178,22 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
         }
         return;
     }
+    if key.code == KeyCode::Esc
+        && app
+            .editor
+            .as_ref()
+            .is_some_and(|e| !e.preview && e.completion.is_some())
+    {
+        if let Some(editor) = app.editor.as_mut() {
+            editor.completion = None;
+        }
+        return;
+    }
     if key.code == KeyCode::Esc {
         if app.save_editor(bridge).is_ok() {
             app.editor = None;
             app.error = None;
+            app.refresh(bridge);
         }
         return;
     }
@@ -210,7 +227,51 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
         }
         return;
     }
+    if let Some(completion) = editor.completion.as_mut() {
+        match key.code {
+            KeyCode::Esc => {
+                editor.completion = None;
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('p') if key.code == KeyCode::Up || ctrl => {
+                completion.selected = completion.selected.saturating_sub(1);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('n') if key.code == KeyCode::Down || ctrl => {
+                if !completion.candidates.is_empty() {
+                    completion.selected =
+                        (completion.selected + 1).min(completion.candidates.len() - 1);
+                }
+                return;
+            }
+            KeyCode::Tab => {
+                let current = completion::extract(&editor.buffer);
+                if current.as_ref().map(|(s, e, q)| (*s, *e, q))
+                    != Some((completion.start, completion.end, &completion.query))
+                {
+                    editor.completion = None;
+                    return;
+                }
+                if let Some(target) = completion.candidates.get(completion.selected).cloned() {
+                    let id = editor.item_id.clone();
+                    match bridge.note_link(&id, &target.id) {
+                        Ok(link) => {
+                            editor
+                                .buffer
+                                .replace_range(completion.start, completion.end, &link);
+                            editor.mark_changed();
+                            editor.completion = None;
+                        }
+                        Err(e) => app.error = Some(format!("Link failed: {e}. Text unchanged.")),
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
     let mut changed = false;
+    let mut moved = false;
     match key.code {
         KeyCode::Char(c) if !ctrl => {
             editor.buffer.insert(&c.to_string());
@@ -230,24 +291,83 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
             editor.buffer.delete();
             changed = before != editor.buffer.text();
         }
-        KeyCode::Left => editor.buffer.left(),
-        KeyCode::Right => editor.buffer.right(),
-        KeyCode::Up => editor.buffer.up(),
-        KeyCode::Down => editor.buffer.down(),
-        KeyCode::Home => editor.buffer.home(),
-        KeyCode::End => editor.buffer.end(),
+        KeyCode::Left => {
+            editor.buffer.left();
+            moved = true;
+        }
+        KeyCode::Right => {
+            editor.buffer.right();
+            moved = true;
+        }
+        KeyCode::Up => {
+            editor.buffer.up();
+            moved = true;
+        }
+        KeyCode::Down => {
+            editor.buffer.down();
+            moved = true;
+        }
+        KeyCode::Home => {
+            editor.buffer.home();
+            moved = true;
+        }
+        KeyCode::End => {
+            editor.buffer.end();
+            moved = true;
+        }
         KeyCode::PageUp => {
             editor.buffer.page_up(10);
             editor.scroll = editor.scroll.saturating_sub(10);
+            moved = true;
         }
         KeyCode::PageDown => {
             editor.buffer.page_down(10);
             editor.scroll = editor.scroll.saturating_add(10);
+            moved = true;
         }
         _ => {}
     }
     if changed {
         editor.mark_changed();
+        update_completion(editor, bridge);
+    } else if moved {
+        update_completion(editor, bridge);
+    }
+}
+
+fn update_completion(editor: &mut lit_tui::state::EditorState, bridge: &mut Bridge) {
+    let Some((start, end, query)) = completion::extract(&editor.buffer) else {
+        editor.completion = None;
+        return;
+    };
+    if query.is_empty() {
+        editor.completion = Some(completion::Completion {
+            start,
+            end,
+            query,
+            candidates: vec![],
+            selected: 0,
+        });
+        return;
+    }
+    if editor
+        .completion
+        .as_ref()
+        .is_some_and(|c| c.start == start && c.end == end && c.query == query)
+    {
+        return;
+    }
+    match bridge.link_search(&query) {
+        Ok(candidates) => {
+            editor.completion = Some(completion::Completion {
+                start,
+                end,
+                query,
+                candidates,
+                selected: 0,
+            })
+        }
+        Err(_) => editor.completion = None,
     }
 }
 

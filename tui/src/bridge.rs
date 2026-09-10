@@ -72,6 +72,39 @@ struct NoteRecoverRequest<'a> {
     id: &'a str,
     text: &'a str,
 }
+#[derive(Debug, Serialize)]
+struct LinkSearchRequest<'a> {
+    version: u64,
+    op: &'static str,
+    query: &'a str,
+}
+#[derive(Debug, Serialize)]
+struct NoteLinkRequest<'a> {
+    version: u64,
+    op: &'static str,
+    id: &'a str,
+    target_id: &'a str,
+}
+#[derive(Debug, Deserialize, Clone)]
+pub struct LinkCandidate {
+    pub id: String,
+    pub title: String,
+}
+#[derive(Debug, Deserialize)]
+struct LinkSearchResponse {
+    version: u64,
+    ok: bool,
+    #[serde(default)]
+    items: Vec<LinkCandidate>,
+    error: Option<crate::model::ErrorBody>,
+}
+#[derive(Debug, Deserialize)]
+struct NoteLinkResponse {
+    version: u64,
+    ok: bool,
+    markdown: Option<String>,
+    error: Option<crate::model::ErrorBody>,
+}
 #[derive(Debug, Deserialize)]
 struct NoteResponse {
     version: u64,
@@ -225,6 +258,48 @@ impl Bridge {
         response
             .path
             .ok_or_else(|| BridgeError::Backend("backend returned no recovery path".into()))
+    }
+    pub fn link_search(&mut self, query: &str) -> Result<Vec<LinkCandidate>, BridgeError> {
+        let r: LinkSearchResponse = self.request(&LinkSearchRequest {
+            version: VERSION,
+            op: "link_search",
+            query,
+        })?;
+        if !r.ok {
+            return Err(BridgeError::Backend(
+                r.error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "link search failed".into()),
+            ));
+        }
+        if r.version != VERSION {
+            return Err(BridgeError::Backend(
+                "unsupported bridge protocol version".into(),
+            ));
+        }
+        Ok(r.items)
+    }
+    pub fn note_link(&mut self, id: &str, target_id: &str) -> Result<String, BridgeError> {
+        let r: NoteLinkResponse = self.request(&NoteLinkRequest {
+            version: VERSION,
+            op: "note_link",
+            id,
+            target_id,
+        })?;
+        if !r.ok {
+            return Err(BridgeError::Backend(
+                r.error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "note link failed".into()),
+            ));
+        }
+        if r.version != VERSION {
+            return Err(BridgeError::Backend(
+                "unsupported bridge protocol version".into(),
+            ));
+        }
+        r.markdown
+            .ok_or_else(|| BridgeError::Backend("backend returned no markdown link".into()))
     }
     fn note_request<T: Serialize>(&mut self, request: &T) -> Result<NoteSnapshot, BridgeError> {
         let response: NoteResponse = self.request(request)?;

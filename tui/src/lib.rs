@@ -1,4 +1,5 @@
 pub mod bridge;
+pub mod completion;
 pub mod editor;
 pub mod markdown;
 pub mod model;

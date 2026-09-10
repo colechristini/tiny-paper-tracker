@@ -44,10 +44,30 @@ terminal renderer does not typeset formulas or fetch remote images.
 - Stage 2 notes: 91 Python tests passed; six Rust tests passed; real PTY checks
   covered Unicode paste, autosave, external-edit conflict, recovery, and
   terminal restoration.
-- Stage 3 Markdown preview: module tests, Rust formatting, and Clippy passed
-  in the isolated renderer branch. Final integrated preview validation is
-  **pending** and should include the full Rust suite plus a PTY toggle and
-  scrolling check after the staged merge.
+- Stage 3 Markdown preview: 10 Rust library tests and 1 binary test passed;
+  formatting and Clippy passed. A real PTY check passed a long paragraph to
+  the editor, toggled preview, used End to reach its end there, verified
+  typing and paste input were ignored while the original text stayed intact,
+  and exited cleanly with terminal restoration.
+- Stage 4 optional links: 95 Python tests, 12 Rust library tests, and 1 Rust
+  binary test passed; formatting and Clippy passed. The optimized
+  `cargo install --path tui --locked` build completed. A real PTY check found
+  a read item hidden by the unread filter, confirmed searching creates no
+  note, selected a Tab completion whose URL-decoded relative link matched the
+  registered target path, preserved surrounding writing, and restored the
+  terminal on clean exit.
+
+The local 100-item idle RSS spot check measured 3,120 KiB for the Rust TUI,
+32,496 KiB for the Python parent, and 19,152 KiB for the bridge (53.5 MiB
+total). These are illustrative local measurements, not a benchmark ceiling.
+The durable smoke check passed against the installed binary. It covered list
+readiness, status persistence, Unicode bracketed-paste autosave, external-edit
+conflict recovery, preview input isolation before and after clean quit, the
+preview end marker, exit status, and terminal restoration:
+
+```sh
+uv run python scripts/smoke_tui.py --binary /Users/colechristini/.cargo/bin/lit-tui
+```
 
 The staged work uses temporary libraries and note directories for validation.
 Markdown remains portable and independent of Obsidian. SQLite remains the

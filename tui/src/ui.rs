@@ -4,7 +4,7 @@ use crate::{
 };
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
@@ -182,6 +182,54 @@ fn draw_editor(frame: &mut Frame, app: &App) {
             .block(Block::default().borders(Borders::ALL)),
         editor_area[1],
     );
+    if let Some(completion) = &editor.completion {
+        let entries = if completion.candidates.is_empty() {
+            vec![Line::from(if completion.query.is_empty() {
+                "Type a title…"
+            } else {
+                "No matching titles"
+            })]
+        } else {
+            let max_rows = editor_area[1].height.saturating_sub(3).max(1) as usize;
+            let offset = completion
+                .selected
+                .saturating_sub(max_rows.saturating_sub(1));
+            completion.candidates[offset..completion.candidates.len().min(offset + max_rows)]
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let actual = i + offset;
+                    Line::from(format!(
+                        "{}{}",
+                        if actual == completion.selected {
+                            "› "
+                        } else {
+                            "  "
+                        },
+                        sanitize(&c.title)
+                    ))
+                })
+                .collect()
+        };
+        let popup_height =
+            (entries.len() as u16 + 2).min(editor_area[1].height.saturating_sub(1).max(1));
+        let popup = Rect {
+            x: editor_area[1].x + 1,
+            y: editor_area[1].y + 1,
+            width: editor_area[1].width.saturating_sub(2),
+            height: popup_height,
+        };
+        frame.render_widget(
+            Paragraph::new(entries)
+                .block(
+                    Block::default()
+                        .title(" Links · Tab insert · Esc cancel ")
+                        .borders(Borders::ALL),
+                )
+                .style(Style::default().bg(Color::Black)),
+            popup,
+        );
+    }
     let cursor_y = editor_area[1]
         .y
         .saturating_add(1)
@@ -326,6 +374,7 @@ mod tests {
                 preview: false,
                 rendered: None,
                 preview_scroll: 0,
+                completion: None,
             }),
             ..Default::default()
         };
