@@ -46,11 +46,25 @@ terminal renderer does not typeset formulas or fetch remote images.
   terminal restoration.
 - Stage 3 Markdown preview: 10 Rust library tests and 1 binary test passed;
   formatting and Clippy passed. A real PTY check passed a long paragraph to
-  the editor, used End to reach its end, toggled preview, verified typing and
-  paste input were ignored in preview while the original text stayed intact,
+  the editor, toggled preview, used End to reach its end there, verified
+  typing and paste input were ignored while the original text stayed intact,
   and exited cleanly with terminal restoration.
-- Stage 4 optional links: the Python bridge protocol and backend tests are
-  complete; integrated Rust completion and PTY validation remain pending.
+- Stage 4 optional links: 95 Python tests, 12 Rust library tests, and 1 Rust
+  binary test passed; formatting and Clippy passed. The optimized
+  `cargo install --path tui --locked` build completed. A real PTY check found
+  a read item hidden by the unread filter, confirmed searching creates no
+  note, selected a Tab completion whose URL-decoded relative link matched the
+  registered target path, preserved surrounding writing, and restored the
+  terminal on clean exit.
+
+The local 100-item idle RSS spot check measured 3,120 KiB for the Rust TUI,
+32,496 KiB for the Python parent, and 19,152 KiB for the bridge (53.5 MiB
+total). These are illustrative local measurements, not a benchmark ceiling.
+The durable smoke check remains pending:
+
+```sh
+uv run python scripts/smoke_tui.py --binary ~/.cargo/bin/lit-tui
+```
 
 The staged work uses temporary libraries and note directories for validation.
 Markdown remains portable and independent of Obsidian. SQLite remains the
