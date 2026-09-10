@@ -103,6 +103,8 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Up | KeyCode::Char('k') => app.move_selection(-1),
         KeyCode::Down | KeyCode::Char('j') => app.move_selection(1),
+        KeyCode::PageUp => app.metadata_scroll = app.metadata_scroll.saturating_sub(8),
+        KeyCode::PageDown => app.metadata_scroll = app.metadata_scroll.saturating_add(8),
         KeyCode::Char('u') => app.set_status(bridge, "unread"),
         KeyCode::Char('c') => app.set_status(bridge, "reading"),
         KeyCode::Char('r') => app.set_status(bridge, "read"),

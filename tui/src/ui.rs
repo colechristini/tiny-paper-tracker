@@ -28,7 +28,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(4), Constraint::Length(2)])
+        .constraints([Constraint::Min(4), Constraint::Length(3)])
         .split(frame.area());
     let body = Layout::default()
         .direction(Direction::Horizontal)
@@ -58,7 +58,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
     frame.render_stateful_widget(list, body[0], &mut list_state(app));
     let detail = if let Some(item) = app.selected_item() {
-        metadata(item)
+        metadata(item, app.metadata_scroll)
     } else if let Some(error) = &app.error {
         Paragraph::new(sanitize(error))
             .block(Block::default().title(" Error ").borders(Borders::ALL))
@@ -90,14 +90,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
             }
         )
     };
-    frame.render_widget(Paragraph::new(Line::from(vec![Span::styled(status, Style::default().fg(Color::Cyan)), Span::raw("   ↑↓/jk move  u/c/r status  1-4 filter  g group  / search  f refresh  ? help  q quit")])).block(Block::default().borders(Borders::TOP)), chunks[1]);
+    frame.render_widget(Paragraph::new(Line::from(vec![Span::styled(status, Style::default().fg(Color::Cyan)), Span::raw("   ↑↓/jk move  Enter edit  u/c/r status  1-4 filter  g group  / search  f refresh  ? help  q quit")])).block(Block::default().borders(Borders::TOP)), chunks[1]);
 }
 fn draw_editor(frame: &mut Frame, app: &App) {
     let editor = app.editor.as_ref().expect("editor checked by caller");
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .constraints([Constraint::Min(3), Constraint::Length(3)])
         .split(area);
     let panes = Layout::default()
         .direction(Direction::Horizontal)
@@ -118,10 +118,10 @@ fn draw_editor(frame: &mut Frame, app: &App) {
     frame.render_stateful_widget(list, panes[0], &mut list_state(app));
     let editor_area = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(1)])
+        .constraints([Constraint::Length(4), Constraint::Min(1)])
         .split(panes[1]);
     let header = format!(
-        "{}\n{} · {}{}",
+        "{}\nCreated: {}\nEdited: {}{}",
         sanitize(&editor.path),
         editor.created_at.as_deref().unwrap_or("created unknown"),
         editor.modified_at,
@@ -147,12 +147,16 @@ fn draw_editor(frame: &mut Frame, app: &App) {
         editor_area[1],
     );
     let (line, _) = editor.buffer.line_col();
+    let visible_height = editor_area[1].height.saturating_sub(2) as usize;
+    let vscroll = editor
+        .scroll
+        .max(line.saturating_sub(visible_height.saturating_sub(1)) as u16);
     let cursor_y = editor_area[1]
         .y
         .saturating_add(1)
         .saturating_add(line as u16)
-        .saturating_sub(editor.scroll);
-    if cursor_y < editor_area[1].bottom().saturating_sub(1) {
+        .saturating_sub(vscroll);
+    if cursor_y < editor_area[1].bottom().saturating_sub(1) && editor_area[1].width > 2 {
         frame.set_cursor_position((
             editor_area[1].x + 1 + visual_col.saturating_sub(hscroll) as u16,
             cursor_y,
@@ -171,7 +175,7 @@ fn list_state(app: &App) -> ratatui::widgets::ListState {
     }
     state
 }
-fn metadata(item: &Item) -> Paragraph<'static> {
+fn metadata(item: &Item, scroll: u16) -> Paragraph<'static> {
     let authors = if item.authors.is_empty() {
         "".into()
     } else {
@@ -196,8 +200,12 @@ fn metadata(item: &Item) -> Paragraph<'static> {
         .filter_map(|v| {
             Some(format!(
                 "{}: {}",
-                v.get("scheme")?.as_str()?,
-                v.get("value")?.as_str()?
+                v.get("scheme")
+                    .and_then(|x| x.as_str())
+                    .or_else(|| v.get(0)?.as_str())?,
+                v.get("value")
+                    .and_then(|x| x.as_str())
+                    .or_else(|| v.get(1)?.as_str())?
             ))
         })
         .collect::<Vec<_>>()
@@ -239,6 +247,7 @@ fn metadata(item: &Item) -> Paragraph<'static> {
         Line::from(sanitize(&item.url)),
     ];
     Paragraph::new(text)
+        .scroll((scroll, 0))
         .block(Block::default().title(" Metadata ").borders(Borders::ALL))
         .wrap(Wrap { trim: true })
 }
@@ -259,9 +268,35 @@ pub fn sanitize(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize;
+    use super::{draw, sanitize};
+    use crate::{
+        editor::TextBuffer,
+        state::{App, EditorState},
+    };
+    use ratatui::{Terminal, backend::TestBackend};
     #[test]
     fn removes_control_chars() {
         assert_eq!(sanitize("a\u{1b}[31mb\n"), "a[31mb\n");
+    }
+    #[test]
+    fn tiny_editor_render_handles_unicode_and_metadata() {
+        let app = App {
+            error: Some("save failed: conflict; Ctrl-E recovery".into()),
+            editor: Some(EditorState {
+                item_id: "x".into(),
+                buffer: TextBuffer::new("世界\nlong line 🙂\n".into()),
+                revision: "r".into(),
+                path: "note.md".into(),
+                created_at: Some("Created".into()),
+                modified_at: "Edited".into(),
+                original: String::new(),
+                dirty_since: None,
+                scroll: 0,
+            }),
+            ..Default::default()
+        };
+        let backend = TestBackend::new(30, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
     }
 }

@@ -64,6 +64,7 @@ pub struct App {
     pub should_quit: bool,
     pub help: bool,
     pub editor: Option<EditorState>,
+    pub metadata_scroll: u16,
 }
 impl Default for App {
     fn default() -> Self {
@@ -80,6 +81,7 @@ impl Default for App {
             should_quit: false,
             help: false,
             editor: None,
+            metadata_scroll: 0,
         }
     }
 }
@@ -101,6 +103,7 @@ impl App {
         }
         let n = self.items.len() as i32;
         self.selected = ((self.selected as i32 + delta).rem_euclid(n)) as usize;
+        self.metadata_scroll = 0;
     }
     pub fn cycle_group(&mut self) {
         self.group = match self.group.as_deref() {
