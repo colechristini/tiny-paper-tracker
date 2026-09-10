@@ -1,6 +1,6 @@
 ---
 name: tiny-reading-tracker
-description: Save and organize papers, blogs, and other resources in the Tiny Reading Tracker SQLite library using lit; manage paper groups, search its queue, track read status, and create portable Markdown notes. Use for Tiny Reading Tracker or lit requests and follow-ups in an established tracker workflow. Explicit Zotero-library requests use the separate reading-library workflow.
+description: Save and organize papers, blogs, and other resources in the Tiny Reading Tracker SQLite library using lit; manage paper groups and one-level subgroups, search its queue, track read status, and create portable Markdown notes. Use for Tiny Reading Tracker or lit requests and follow-ups in an established tracker workflow. Explicit Zotero-library requests use the separate reading-library workflow.
 ---
 
 # Tiny Reading Tracker
@@ -83,24 +83,33 @@ lit --json group create 'Methods' --parent 'Journal Club'
 lit --json group ls
 lit --json add https://arxiv.org/abs/1706.03762 --group 'Journal Club'
 lit --json group add 'Journal Club' FULL_ITEM_ID
+lit --json group add 'Journal Club/Methods' FULL_ITEM_ID
 lit --json ls --all --group 'Journal Club'
+lit --json ls --all --group 'Journal Club/Methods'
 lit --json search attention --group 'Journal Club'
+lit --json search attention --group 'Journal Club/Methods'
 lit --json group rename 'Journal Club' 'Friday Reading'
 lit --json group remove 'Friday Reading' FULL_ITEM_ID
 lit --json group delete 'Friday Reading'
 ```
 
 Groups must exist before `add --group`; repeat the flag for multiple groups.
-Group selectors are exact names or full stable IDs, not fuzzy title matches.
+Group selectors are exact names, `Parent/Child` paths, or full stable IDs, not fuzzy title matches.
 Membership add/remove commands accept multiple saved-item selectors and are
 idempotent; invalid/ambiguous items abort the membership operation. Removing a
 membership or deleting a group retains library items and notes. Do not interpret
 “remove from this group” as deleting the resource. `group ls` returns all groups
 including empty ones with total `item_count`; item JSON includes `groups`.
-Groups support roots and one child level. Parent filters include direct and child
-members, while child filters include only direct members. A bare name must be
-unambiguous; use `Parent/Child` or a full ID when needed. These commands require
-the checkout's post-v0.1.0 version; use the documented project prefix.
+Groups support roots and at most one child level. Create a subgroup with
+`group create CHILD --parent PARENT`; the parent must be a root. Names are
+case-insensitively unique among siblings, so the same child name may exist under
+different roots. A bare selector must be unambiguous; use `Parent/Child` or a
+full group ID for qualified selection. Parent filters are the union of direct
+and child memberships, counting each item once; child filters include only direct
+members. Removing a parent membership also removes that item's child
+memberships. Deleting a parent cascades to its child groups and memberships but
+retains all library records and notes. These commands require the checkout's
+current `v0.3.0+` version; use the documented project prefix.
 
 ## Status and notes
 
@@ -138,6 +147,12 @@ are not one transaction, so check both parts of an uncertain `read --note`.
 For mutations, inspect the returned item/status or note path; verify note text
 in the file after writing. Report titles and outcomes concisely, including
 individual failures and note paths when relevant.
+
+The terminal interface shows loose items at the top without a heading, followed
+by named subgroup sections. In the All view, subgroup headings include their
+parent's name. `g` and `h` cycle root groups and All. Press `m` in list mode to
+edit memberships: Space toggles, Enter applies, and Esc cancels. Checkboxes show
+direct membership only, so a child assignment does not check the parent.
 
 The optional TUI links workflow searches all saved titles, accepts `@title`
 completion with Tab, and inserts a portable relative Markdown file link when a

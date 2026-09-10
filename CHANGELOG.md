@@ -1,28 +1,33 @@
 # Changelog
 
-## Unreleased
+## [0.3.0] — 2026-09-10
 
-The staged terminal interface now provides a Ratatui reading list, portable
-Markdown note editing, autosave and recovery copies, Markdown preview, and
-optional note-link backend support.
+The Rust terminal interface provides a reading list, portable Markdown note
+editing, autosave and recovery copies, Markdown preview, and paper links.
 
 - `lit tui` uses the same Python interpreter, resolved database, and notes
   directory as the CLI.
 - Note files remain portable and support existing absolute paths and legacy
   relative vault paths; Obsidian is optional.
-- The optional links workflow searches all saved titles and inserts relative
+- The `@title` and Tab completion workflow searches all saved titles and inserts relative
   encoded Markdown file links after a target is selected. It creates target
   notes on selection and keeps one shared note per item across groups. It does
   not provide backlinks or a graph.
-- The staged preview validation passed the Rust suite and a PTY check covering
-  long paragraphs, End scrolling, preview input isolation, and clean exit.
-- Integrated Rust link completion and PTY validation remain pending.
 - Groups support one child level with `group create NAME --parent PARENT`;
   parent filters include child memberships and the schema migrates to version 4.
+- Subgroups appear as stacked sections in the reading panel, with loose papers
+  at the top without a heading. `g` and `h` cycle top-level groups in both directions.
+- Filter by reading status or title, inspect metadata, and change status from
+  the list. `Delete` removes a library record while preserving its note file.
 - The TUI supports renaming the selected paper title with `F2` or uppercase `R`;
   titles are edited inline with Unicode-safe cursor and deletion controls.
 - The list view supports editing direct paper memberships with `m`, including
   root and child group checkboxes.
+- The tracker skill documents subgroup creation, qualified selectors, parent
+  membership behavior, and TUI controls.
+
+Existing libraries migrate transactionally to schema 4. Older releases cannot
+open the upgraded database.
 
 ## [0.2.0] — 2026-09-10
 
@@ -39,3 +44,4 @@ named collections.
 - Migrate existing schema 1 databases automatically to schema 2.
 
 [0.2.0]: https://github.com/colechristini/tiny-paper-tracker/releases/tag/v0.2.0
+[0.3.0]: https://github.com/colechristini/tiny-paper-tracker/releases/tag/v0.3.0
