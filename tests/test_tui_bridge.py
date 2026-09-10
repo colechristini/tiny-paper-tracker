@@ -6,7 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import tiny_reading_tracker.tui_bridge as tui_bridge
+from tiny_reading_tracker.config import Config
 from tiny_reading_tracker.db import Database
+from tiny_reading_tracker.ingest import ResolutionError
 from tiny_reading_tracker.models import ResolvedItem
 from tiny_reading_tracker.tui_bridge import _handle
 
@@ -35,6 +38,118 @@ def test_bridge_rejects_unknown_protocol_operation(tmp_path: Path) -> None:
         response = _handle({"version": 99, "op": "list"}, library, {})
     assert response["ok"] is False
     assert response["error"]["kind"] == "protocol"
+
+
+def test_bridge_add_item_resolves_and_attaches_exact_group(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+
+    def fake_resolve(value, translator_url, timeout):
+        calls.append((value, translator_url, timeout))
+        return ResolvedItem(
+            title="Resolved paper",
+            url="https://resolved.example/paper",
+            identifiers=[("url", "https://resolved.example/paper")],
+        )
+
+    monkeypatch.setattr(tui_bridge, "resolve", fake_resolve)
+    config = Config(tmp_path / "db.sqlite", None, "https://translator.example", 7.5)
+    with Database(config.db) as library:
+        group = library.create_group("Reading")
+        response = _handle(
+            {
+                "version": 1,
+                "op": "add_item",
+                "value": "https://input.example",
+                "group_id": group["id"],
+            },
+            library,
+            config=config,
+        )
+        assert response["ok"] and response["created"] is True
+        assert response["item"]["groups"] == [{"id": group["id"], "name": "Reading"}]
+        assert calls == [("https://input.example", "https://translator.example", 7.5)]
+
+
+def test_bridge_add_item_duplicate_skips_network_and_preserves_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    with Database(tmp_path / "db.sqlite") as library:
+        item, _ = library.add(
+            ResolvedItem(
+                title="Existing title",
+                url="https://existing.example/",
+                identifiers=[("url", "https://existing.example/")],
+            )
+        )
+        library.set_status(item["id"], "read")
+        library.set_note_path(item["id"], "Reading/existing.md")
+        group = library.create_group("Reading")
+
+        def no_network(*args):
+            raise AssertionError("duplicate add must not resolve through the network")
+
+        monkeypatch.setattr(tui_bridge, "resolve", no_network)
+        result = _handle(
+            {
+                "version": 1,
+                "op": "add_item",
+                "value": "https://existing.example/",
+                "group_id": group["id"],
+            },
+            library,
+        )
+        assert result["ok"] and result["created"] is False
+        assert result["item"]["id"] == item["id"]
+        assert result["item"]["title"] == "Existing title"
+        assert result["item"]["status"] == "read"
+        assert result["item"]["note_path"] == "Reading/existing.md"
+        assert result["item"]["groups"] == [{"id": group["id"], "name": "Reading"}]
+
+
+def test_bridge_add_item_resolution_failure_does_not_mutate(tmp_path: Path, monkeypatch) -> None:
+    with Database(tmp_path / "db.sqlite") as library:
+        group = library.create_group("Reading")
+
+        def failing_resolve(*args):
+            assert not library.connection.in_transaction
+            raise ResolutionError("lookup failed")
+
+        monkeypatch.setattr(tui_bridge, "resolve", failing_resolve)
+        result = _handle(
+            {
+                "version": 1,
+                "op": "add_item",
+                "value": "https://new.example/",
+                "group_id": group["id"],
+            },
+            library,
+        )
+        assert result == {
+            "version": 1,
+            "ok": False,
+            "error": {"kind": "request", "message": "lookup failed"},
+        }
+        assert library.list_items(None) == []
+        assert library.connection.execute("SELECT COUNT(*) FROM item_groups").fetchone()[0] == 0
+
+
+def test_bridge_add_item_invalid_input_or_group_does_not_mutate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        tui_bridge, "resolve", lambda *args: (_ for _ in ()).throw(AssertionError())
+    )
+    with Database(tmp_path / "db.sqlite") as library:
+        before = library.list_items(None)
+        bad_input = _handle(
+            {"version": 1, "op": "add_item", "value": "not-an-input", "group_id": None}, library
+        )
+        bad_group = _handle(
+            {"version": 1, "op": "add_item", "value": "https://new.example", "group_id": "missing"},
+            library,
+        )
+        assert not bad_input["ok"] and not bad_group["ok"]
+        assert library.list_items(None) == before
 
 
 def test_bridge_rename_item_validates_and_returns_item(tmp_path: Path) -> None:

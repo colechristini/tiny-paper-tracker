@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from .config import Config
 from .db import Database, DatabaseError
+from .ingest import resolve
+from .models import ResolvedItem
+from .normalize import input_identifiers
 from .notes import NoteConflictError, NoteDocument, NoteError, load_note, save_note
 
 PROTOCOL_VERSION = 1
@@ -24,6 +28,20 @@ def _response(**payload: Any) -> dict[str, Any]:
 
 def _error(message: str, kind: str = "error") -> dict[str, Any]:
     return {"version": PROTOCOL_VERSION, "ok": False, "error": {"kind": kind, "message": message}}
+
+
+def _bridge_config() -> Config:
+    timeout_value = os.environ.get("LIT_TUI_TIMEOUT", "20")
+    try:
+        timeout = float(timeout_value)
+    except ValueError:
+        timeout = 0.0
+    return Config(
+        Path(os.environ.get("LIT_TUI_DB", "library.db")),
+        None,
+        os.environ.get("LIT_TUI_TRANSLATOR_URL", "http://127.0.0.1:1969"),
+        timeout,
+    )
 
 
 def _note_payload(note: NoteDocument) -> dict[str, Any]:
@@ -169,10 +187,54 @@ def _list(request: dict[str, Any], library: Database) -> dict[str, Any]:
     return _response(items=items, groups=groups, sections=sections)
 
 
+def _add_item(request: dict[str, Any], library: Database, config: Config) -> dict[str, Any]:
+    value = request.get("value")
+    group_id = request.get("group_id")
+    if not isinstance(value, str) or not value.strip():
+        return _error("add_item requires a non-empty string value", "request")
+    if group_id is not None and not isinstance(group_id, str):
+        return _error("add_item group_id must be a full group ID or null", "request")
+    if group_id is not None:
+        try:
+            group = library.get_group(group_id)
+        except DatabaseError as exc:
+            return _error(str(exc), "request")
+        if group["id"] != group_id:
+            return _error("add_item group_id must be a full group ID", "request")
+
+    try:
+        identifiers = input_identifiers(value)
+        existing = library.find_identifiers(identifiers)
+        if existing is not None:
+            resolved = ResolvedItem(
+                title=existing["title"],
+                url=existing["url"],
+                kind=existing["kind"],
+                authors=existing["authors"],
+                venue=existing["venue"],
+                published_at=existing["published_at"],
+                source=existing["source"],
+                metadata=existing["metadata"],
+                identifiers=identifiers,
+            )
+            item, created = library.add(
+                resolved, groups=[group_id] if group_id is not None else None
+            )
+        else:
+            resolved = resolve(value, config.translator_url, config.timeout)
+            item, created = library.add(
+                resolved, groups=[group_id] if group_id is not None else None
+            )
+    except (DatabaseError, OSError, ValueError) as exc:
+        return _error(str(exc), "request")
+    return _response(item=item, created=created)
+
+
 def _handle(
     request: dict[str, Any],
     library: Database,
     documents: dict[str, NoteDocument] | None = None,
+    config: Config | None = None,
 ) -> dict[str, Any]:
     if documents is None:
         documents = {}
@@ -181,6 +243,8 @@ def _handle(
     operation = request.get("op")
     if operation == "list":
         return _list(request, library)
+    if operation == "add_item":
+        return _add_item(request, library, config or _bridge_config())
     if operation == "set_status":
         item_id = request.get("id")
         status = request.get("status")
@@ -301,6 +365,7 @@ def main() -> int:
     try:
         with Database(Path(db)) as library:
             documents: dict[str, NoteDocument] = {}
+            config = _bridge_config()
             for line in sys.stdin:
                 if not line.strip():
                     continue
@@ -308,7 +373,7 @@ def main() -> int:
                     request = json.loads(line)
                     if not isinstance(request, dict):
                         raise ValueError("request must be a JSON object")
-                    result = _handle(request, library, documents)
+                    result = _handle(request, library, documents, config)
                 except (ValueError, TypeError, DatabaseError, OSError, sqlite3.Error) as exc:
                     result = _error(str(exc), "backend")
                 print(json.dumps(result, ensure_ascii=False), flush=True)
