@@ -52,7 +52,9 @@ fn run(
                     redraw = true;
                 }
                 Event::Paste(text) => {
-                    if app.editor.as_ref().is_some_and(|e| !e.preview) { app.insert_editor_text(&text); }
+                    if app.editor.as_ref().is_some_and(|e| !e.preview) {
+                        app.insert_editor_text(&text);
+                    }
                     redraw = true;
                 }
                 Event::Resize(_, _) => redraw = true,
@@ -140,7 +142,12 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
 
 fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    if ctrl && key.code == KeyCode::Char('v') { if let Some(editor) = app.editor.as_mut() { editor.toggle_preview(); } return; }
+    if ctrl && key.code == KeyCode::Char('v') {
+        if let Some(editor) = app.editor.as_mut() {
+            editor.toggle_preview();
+        }
+        return;
+    }
     if ctrl && matches!(key.code, KeyCode::Char('s') | KeyCode::Char('r')) {
         let _ = app.save_editor(bridge);
         return;
@@ -166,8 +173,20 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent) {
         return;
     };
     if editor.preview {
-        let max = editor.rendered.as_ref().map(|text| text.lines.len().saturating_sub(1) as u16).unwrap_or(0);
-        match key.code { KeyCode::Up => editor.scroll = editor.scroll.saturating_sub(1), KeyCode::Down => editor.scroll = editor.scroll.saturating_add(1).min(max), KeyCode::PageUp => editor.scroll = editor.scroll.saturating_sub(10), KeyCode::PageDown => editor.scroll = editor.scroll.saturating_add(10).min(max), KeyCode::Home => editor.scroll = 0, KeyCode::End => editor.scroll = max, _ => {} }
+        let max = editor
+            .rendered
+            .as_ref()
+            .map(|text| text.lines.len().saturating_sub(1) as u16)
+            .unwrap_or(0);
+        match key.code {
+            KeyCode::Up => editor.scroll = editor.scroll.saturating_sub(1),
+            KeyCode::Down => editor.scroll = editor.scroll.saturating_add(1).min(max),
+            KeyCode::PageUp => editor.scroll = editor.scroll.saturating_sub(10),
+            KeyCode::PageDown => editor.scroll = editor.scroll.saturating_add(10).min(max),
+            KeyCode::Home => editor.scroll = 0,
+            KeyCode::End => editor.scroll = max,
+            _ => {}
+        }
         return;
     }
     let mut changed = false;

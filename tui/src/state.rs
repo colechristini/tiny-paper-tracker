@@ -28,7 +28,9 @@ impl EditorState {
     }
     pub fn toggle_preview(&mut self) {
         self.preview = !self.preview;
-        if self.preview { self.rendered = Some(crate::markdown::render(&self.buffer.text())); }
+        if self.preview {
+            self.rendered = Some(crate::markdown::render(&self.buffer.text()));
+        }
     }
 }
 

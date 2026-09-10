@@ -140,10 +140,32 @@ fn draw_editor(frame: &mut Frame, app: &App) {
         editor_area[0],
     );
     let text = editor.buffer.text();
+    let (line, _) = editor.buffer.line_col();
+    let visible_height = editor_area[1].height.saturating_sub(2) as usize;
+    let vscroll = editor
+        .scroll
+        .min(line as u16)
+        .max(line.saturating_sub(visible_height.saturating_sub(1)) as u16);
     if editor.preview {
-        let preview = editor.rendered.as_ref().expect("preview is rendered on entry");
-        frame.render_widget(Paragraph::new(preview.clone()).scroll((editor.scroll, 0)).block(Block::default().title(" Preview (Ctrl-V to edit) ").borders(Borders::ALL)), editor_area[1]);
-        frame.render_widget(Paragraph::new("Ctrl-V edit · Ctrl-S save · Esc save and return · Ctrl-E recovery · Ctrl-Q save+quit · arrows/PageUp/PageDown scroll").block(Block::default().borders(Borders::TOP)), chunks[1]);
+        let vscroll = editor.scroll;
+        let preview = editor
+            .rendered
+            .as_ref()
+            .expect("preview is rendered on entry");
+        let paragraph = Paragraph::new(preview.clone())
+            .scroll((vscroll, 0))
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .title(" Preview (Ctrl-V to edit) ")
+                    .borders(Borders::ALL),
+            );
+        frame.render_widget(paragraph, editor_area[1]);
+        let footer = app.error.as_deref().map(sanitize).unwrap_or_else(|| "Ctrl-V edit · Ctrl-S save · Esc save and return · Ctrl-E recovery · Ctrl-Q save+quit · arrows/PageUp/PageDown scroll".to_string());
+        frame.render_widget(
+            Paragraph::new(footer).block(Block::default().borders(Borders::TOP)),
+            chunks[1],
+        );
         return;
     }
     let lines = text
@@ -160,11 +182,6 @@ fn draw_editor(frame: &mut Frame, app: &App) {
             .block(Block::default().borders(Borders::ALL)),
         editor_area[1],
     );
-    let (line, _) = editor.buffer.line_col();
-    let visible_height = editor_area[1].height.saturating_sub(2) as usize;
-    let vscroll = editor
-        .scroll
-        .max(line.saturating_sub(visible_height.saturating_sub(1)) as u16);
     let cursor_y = editor_area[1]
         .y
         .saturating_add(1)
@@ -304,12 +321,10 @@ mod tests {
                 created_at: Some("2026-09-10T08:00:00Z".into()),
                 modified_at: "2026-09-10T09:30:00Z".into(),
                 original: String::new(),
-            dirty_since: None,
-            scroll: 0,
-            preview: false,
-            rendered: None,
-            preview: false,
-            rendered: None,
+                dirty_since: None,
+                scroll: 0,
+                preview: false,
+                rendered: None,
             }),
             ..Default::default()
         };
