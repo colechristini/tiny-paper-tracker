@@ -317,14 +317,7 @@ fn list_rows(app: &App, editor: bool) -> Vec<ListItem<'static>> {
                 let title = section
                     .map(|s| sanitize(&s.title))
                     .unwrap_or_else(|| "Reading".into());
-                let count = section
-                    .map(|s| {
-                        s.item_ids
-                            .iter()
-                            .filter(|id| app.items.iter().any(|i| &i.id == *id))
-                            .count()
-                    })
-                    .unwrap_or(app.items.len());
+                let count = section.map(|s| s.item_ids.len()).unwrap_or(app.items.len());
                 ListItem::new(Line::from(Span::styled(
                     format!("── {} ({count}) ──", title),
                     Style::default()
