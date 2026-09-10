@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add URLs and identifiers from the list with `a`; metadata resolution runs in a
+  responsive background worker and uses the active root group as its destination.
+- Filter the current list to papers with or without registered notes using `5`
+  and `6`, while retaining status, group, and title filters.
+- List refreshes preserve the same paper and section when possible, then choose
+  the nearest surviving paper when a mutation or filter removes it.
+
 ## [0.3.0] — 2026-09-10
 
 The Rust terminal interface provides a reading list, portable Markdown note

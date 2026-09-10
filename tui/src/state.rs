@@ -1,10 +1,14 @@
 use crate::{
-    bridge::Bridge,
+    bridge::{AddResult, Bridge},
     completion::Completion,
     editor::TextBuffer,
     model::{Group, Item, Section},
 };
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashSet,
+    sync::mpsc::{self, Receiver, TryRecvError},
+    time::{Duration, Instant},
+};
 
 pub struct EditorState {
     pub item_id: String,
@@ -24,6 +28,15 @@ pub struct EditorState {
 pub struct RenameState {
     pub item_id: String,
     pub buffer: TextBuffer,
+}
+pub struct AddState {
+    pub buffer: TextBuffer,
+    pub(crate) result: Option<Receiver<Result<AddResult, String>>>,
+}
+impl AddState {
+    pub fn busy(&self) -> bool {
+        self.result.is_some()
+    }
 }
 pub struct MembershipState {
     pub item_id: String,
@@ -56,12 +69,29 @@ pub enum StatusFilter {
     Reading,
     Read,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NoteFilter {
+    #[default]
+    All,
+    HasNote,
+    NoNote,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DisplayRow {
     Header(Option<String>),
     Empty,
     Item(usize),
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SelectionOccurrence {
+    id: String,
+    section: Option<String>,
+}
+struct SelectionSnapshot {
+    selected: SelectionOccurrence,
+    selected_index: usize,
+    ordered: Vec<SelectionOccurrence>,
 }
 impl StatusFilter {
     pub fn as_str(self) -> &'static str {
@@ -81,6 +111,15 @@ impl StatusFilter {
         }
     }
 }
+impl NoteFilter {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::HasNote => "has_note",
+            Self::NoNote => "no_note",
+        }
+    }
+}
 
 pub struct App {
     pub items: Vec<Item>,
@@ -89,6 +128,7 @@ pub struct App {
     pub display_rows: Vec<DisplayRow>,
     pub selected: usize,
     pub filter: StatusFilter,
+    pub note_filter: NoteFilter,
     pub group: Option<String>,
     pub query: String,
     pub searching: bool,
@@ -99,6 +139,8 @@ pub struct App {
     pub editor: Option<EditorState>,
     pub rename: Option<RenameState>,
     pub membership: Option<MembershipState>,
+    pub add: Option<AddState>,
+    pub notice: Option<String>,
     pub metadata_scroll: u16,
 }
 impl Default for App {
@@ -110,6 +152,7 @@ impl Default for App {
             display_rows: vec![],
             selected: 0,
             filter: StatusFilter::All,
+            note_filter: NoteFilter::All,
             group: None,
             query: String::new(),
             searching: false,
@@ -120,6 +163,8 @@ impl Default for App {
             editor: None,
             rename: None,
             membership: None,
+            add: None,
+            notice: None,
             metadata_scroll: 0,
         }
     }
@@ -156,51 +201,96 @@ impl App {
             }
         }
     }
-    fn selected_key(&self) -> Option<(String, Option<String>)> {
-        let DisplayRow::Item(index) = self.display_rows.get(self.selected)? else {
-            return None;
-        };
-        let item = self.items.get(*index)?;
-        let section = self.display_rows[..=self.selected]
-            .iter()
-            .rev()
-            .find_map(|row| {
-                if let DisplayRow::Header(id) = row {
-                    id.clone()
-                } else {
-                    None
+    fn display_occurrences(&self) -> Vec<(usize, SelectionOccurrence)> {
+        if self.display_rows.is_empty() {
+            return self
+                .items
+                .iter()
+                .enumerate()
+                .map(|(row, item)| {
+                    (
+                        row,
+                        SelectionOccurrence {
+                            id: item.id.clone(),
+                            section: None,
+                        },
+                    )
+                })
+                .collect();
+        }
+        let mut section = None;
+        let mut occurrences = Vec::new();
+        for (row, display_row) in self.display_rows.iter().enumerate() {
+            match display_row {
+                DisplayRow::Header(id) => section = id.clone(),
+                DisplayRow::Empty => {}
+                DisplayRow::Item(index) => {
+                    if let Some(item) = self.items.get(*index) {
+                        occurrences.push((
+                            row,
+                            SelectionOccurrence {
+                                id: item.id.clone(),
+                                section: section.clone(),
+                            },
+                        ));
+                    }
                 }
-            });
-        Some((item.id.clone(), section))
+            }
+        }
+        occurrences
     }
-    fn restore_selection(&mut self, key: Option<(String, Option<String>)>) {
+    fn selection_snapshot(&self) -> Option<SelectionSnapshot> {
+        let displayed = self.display_occurrences();
+        let selected_index = displayed
+            .iter()
+            .position(|(row, _)| *row == self.selected)?;
+        Some(SelectionSnapshot {
+            selected: displayed[selected_index].1.clone(),
+            selected_index,
+            ordered: displayed
+                .into_iter()
+                .map(|(_, occurrence)| occurrence)
+                .collect(),
+        })
+    }
+    fn restore_selection(&mut self, snapshot: Option<SelectionSnapshot>) {
         self.selected = 0;
-        if let Some((id, section)) = key
-            && let Some(pos) = self.display_rows.iter().enumerate().find_map(|(pos, row)| {
-                let DisplayRow::Item(index) = row else {
-                    return None;
-                };
-                if self.items.get(*index).is_some_and(|item| item.id == id)
-                    && self.display_rows[..=pos].iter().rev().find_map(|r| {
-                        if let DisplayRow::Header(sid) = r {
-                            sid.clone()
-                        } else {
-                            None
-                        }
-                    }) == section
-                {
-                    Some(pos)
-                } else {
-                    None
-                }
+        let current = self.display_occurrences();
+        let Some(snapshot) = snapshot else {
+            self.selected = current.first().map(|(row, _)| *row).unwrap_or(0);
+            return;
+        };
+        let find = |target: &SelectionOccurrence, exact_section: bool| {
+            current.iter().find_map(|(row, occurrence)| {
+                (occurrence.id == target.id
+                    && (!exact_section || occurrence.section == target.section))
+                    .then_some(*row)
             })
+        };
+        if let Some(row) =
+            find(&snapshot.selected, true).or_else(|| find(&snapshot.selected, false))
         {
-            self.selected = pos;
+            self.selected = row;
             return;
         }
-        self.selected = (0..self.display_rows.len())
-            .find(|&pos| matches!(self.display_rows[pos], DisplayRow::Item(_)))
-            .unwrap_or(0);
+        let mut skipped_ids = HashSet::from([snapshot.selected.id.clone()]);
+        for occurrence in snapshot.ordered[..snapshot.selected_index].iter().rev() {
+            if skipped_ids.insert(occurrence.id.clone())
+                && let Some(row) = find(occurrence, true).or_else(|| find(occurrence, false))
+            {
+                self.selected = row;
+                return;
+            }
+        }
+        for occurrence in &snapshot.ordered[snapshot.selected_index + 1..] {
+            if skipped_ids.insert(occurrence.id.clone())
+                && let Some(row) = find(occurrence, true).or_else(|| find(occurrence, false))
+            {
+                self.selected = row;
+                return;
+            }
+        }
+        self.selected = current.first().map(|(row, _)| *row).unwrap_or(0);
     }
     fn next_selectable(&self, from: usize, delta: i32) -> Option<usize> {
         if self.display_rows.is_empty() {
@@ -216,14 +306,19 @@ impl App {
         None
     }
     pub fn refresh(&mut self, bridge: &mut Bridge) {
-        let key = self.selected_key();
-        match bridge.list(self.filter.as_str(), self.group.as_deref(), &self.query) {
+        let snapshot = self.selection_snapshot();
+        match bridge.list(
+            self.filter.as_str(),
+            self.group.as_deref(),
+            &self.query,
+            self.note_filter.as_str(),
+        ) {
             Ok((items, groups, sections)) => {
                 self.items = items;
                 self.groups = groups;
                 self.sections = sections;
                 self.rebuild_display_rows();
-                self.restore_selection(key);
+                self.restore_selection(snapshot);
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -236,6 +331,14 @@ impl App {
         if let Some(next) = self.next_selectable(self.selected, delta) {
             self.selected = next;
         }
+        self.metadata_scroll = 0;
+    }
+    pub fn toggle_note_filter(&mut self, requested: NoteFilter) {
+        self.note_filter = if self.note_filter == requested {
+            NoteFilter::All
+        } else {
+            requested
+        };
         self.metadata_scroll = 0;
     }
     pub fn cycle_group(&mut self, delta: i32) {
@@ -263,7 +366,6 @@ impl App {
             .checked_sub(1)
             .and_then(|i| roots.get(i))
             .map(|g| g.id.clone());
-        self.selected = 0;
         self.metadata_scroll = 0;
     }
     pub fn delete_selected(&mut self, bridge: &mut Bridge) {
@@ -317,6 +419,89 @@ impl App {
             }
             Err(e) => self.error = Some(e.to_string()),
         }
+    }
+    pub fn begin_add(&mut self) {
+        self.add = Some(AddState {
+            buffer: TextBuffer::new(String::new()),
+            result: None,
+        });
+        self.error = None;
+        self.notice = None;
+    }
+    pub fn insert_add_text(&mut self, text: &str) {
+        if let Some(add) = self.add.as_mut()
+            && !add.busy()
+        {
+            add.buffer.insert(&text.replace(['\r', '\n'], " "));
+        }
+    }
+    pub fn cancel_add(&mut self) {
+        if self.add.as_ref().is_some_and(|add| !add.busy()) {
+            self.add = None;
+            self.error = None;
+        }
+    }
+    pub fn submit_add(&mut self) {
+        let Some(add) = self.add.as_mut() else {
+            return;
+        };
+        if add.busy() {
+            return;
+        }
+        let value = add.buffer.text().trim().to_string();
+        if value.is_empty() {
+            self.error = Some("Enter a URL or identifier".into());
+            return;
+        }
+        let group_id = self.group.as_ref().and_then(|selected| {
+            self.groups
+                .iter()
+                .find(|group| group.id == *selected && group.parent_id.is_none())
+                .map(|group| group.id.clone())
+        });
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = Bridge::spawn()
+                .and_then(|mut bridge| bridge.add_item(&value, group_id.as_deref()))
+                .map_err(|error| error.to_string());
+            let _ = sender.send(result);
+        });
+        add.result = Some(receiver);
+        self.error = None;
+    }
+    pub fn poll_add(&mut self, bridge: &mut Bridge) -> bool {
+        let outcome = match self.add.as_ref().and_then(|add| add.result.as_ref()) {
+            Some(receiver) => match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => return false,
+                Err(TryRecvError::Disconnected) => {
+                    Some(Err("add worker stopped unexpectedly".into()))
+                }
+            },
+            None => return false,
+        };
+        match outcome.expect("outcome set for active receiver") {
+            Ok(result) => {
+                self.add = None;
+                self.refresh(bridge);
+                self.notice = Some(format!(
+                    "{}: {}",
+                    if result.created {
+                        "Added"
+                    } else {
+                        "Already saved"
+                    },
+                    result.item.title
+                ));
+            }
+            Err(message) => {
+                if let Some(add) = self.add.as_mut() {
+                    add.result = None;
+                }
+                self.error = Some(format!("Add failed: {message}"));
+            }
+        }
+        true
     }
     pub fn begin_membership(&mut self) {
         let Some(item) = self.selected_item() else {
@@ -586,6 +771,23 @@ mod tests {
     }
 
     #[test]
+    fn note_filters_toggle_independently_without_resetting_selection() {
+        let mut app = App {
+            selected: 3,
+            filter: StatusFilter::Unread,
+            ..Default::default()
+        };
+        app.toggle_note_filter(NoteFilter::HasNote);
+        assert_eq!(app.note_filter, NoteFilter::HasNote);
+        assert_eq!(app.filter, StatusFilter::Unread);
+        assert_eq!(app.selected, 3);
+        app.toggle_note_filter(NoteFilter::NoNote);
+        assert_eq!(app.note_filter, NoteFilter::NoNote);
+        app.toggle_note_filter(NoteFilter::NoNote);
+        assert_eq!(app.note_filter, NoteFilter::All);
+    }
+
+    #[test]
     fn group_cycles_forward_and_backward_with_all_and_stale_ids() {
         let mut app = App {
             groups: vec![
@@ -602,8 +804,10 @@ mod tests {
             ],
             ..Default::default()
         };
+        app.selected = 4;
         app.cycle_group(1);
         assert_eq!(app.group.as_deref(), Some("one"));
+        assert_eq!(app.selected, 4);
         app.cycle_group(1);
         assert_eq!(app.group.as_deref(), Some("two"));
         app.cycle_group(1);
@@ -680,12 +884,131 @@ mod tests {
         app.rebuild_display_rows();
         app.selected = 3;
         assert_eq!(app.selected_item().unwrap().id, "paper");
-        let key = app.selected_key();
+        let key = app.selection_snapshot();
         app.sections.reverse();
         app.rebuild_display_rows();
         app.restore_selection(key);
         assert_eq!(app.selected, 1);
         assert_eq!(app.selected_item().unwrap().id, "paper");
+    }
+
+    #[test]
+    fn deleting_a_duplicated_selection_chooses_the_nearest_previous_paper() {
+        let mut app = App {
+            items: vec![item("previous"), item("deleted"), item("next")],
+            sections: vec![
+                Section {
+                    id: Some("one".into()),
+                    title: "One".into(),
+                    item_ids: vec!["previous".into(), "deleted".into()],
+                },
+                Section {
+                    id: Some("two".into()),
+                    title: "Two".into(),
+                    item_ids: vec!["deleted".into(), "next".into()],
+                },
+            ],
+            ..Default::default()
+        };
+        app.rebuild_display_rows();
+        app.selected = 4;
+        let snapshot = app.selection_snapshot();
+
+        app.items.retain(|paper| paper.id != "deleted");
+        app.sections[0].item_ids = vec!["previous".into()];
+        app.sections[1].item_ids = vec!["next".into()];
+        app.rebuild_display_rows();
+        app.restore_selection(snapshot);
+
+        assert_eq!(app.selected_item().unwrap().id, "previous");
+    }
+
+    #[test]
+    fn membership_section_move_keeps_the_same_paper_selected() {
+        let mut app = App {
+            items: vec![item("paper")],
+            sections: vec![
+                Section {
+                    id: Some("root".into()),
+                    title: "Root".into(),
+                    item_ids: vec!["paper".into()],
+                },
+                Section {
+                    id: Some("child".into()),
+                    title: "Child".into(),
+                    item_ids: vec![],
+                },
+            ],
+            ..Default::default()
+        };
+        app.rebuild_display_rows();
+        app.selected = 1;
+        let snapshot = app.selection_snapshot();
+
+        app.sections[0].item_ids.clear();
+        app.sections[1].item_ids.push("paper".into());
+        app.rebuild_display_rows();
+        app.restore_selection(snapshot);
+
+        assert_eq!(app.selected_item().unwrap().id, "paper");
+        assert_eq!(
+            app.display_occurrences()[0].1.section.as_deref(),
+            Some("child")
+        );
+    }
+
+    #[test]
+    fn filtered_out_selection_prefers_previous_then_next() {
+        let mut app = App {
+            items: vec![item("a"), item("b"), item("c"), item("d")],
+            ..Default::default()
+        };
+        app.selected = 2;
+        let snapshot = app.selection_snapshot();
+        app.items.remove(2);
+        app.restore_selection(snapshot);
+        assert_eq!(app.selected_item().unwrap().id, "b");
+
+        app.items = vec![item("a"), item("b"), item("c")];
+        app.selected = 0;
+        let snapshot = app.selection_snapshot();
+        app.items.remove(0);
+        app.restore_selection(snapshot);
+        assert_eq!(app.selected_item().unwrap().id, "b");
+    }
+
+    #[test]
+    fn add_buffer_edits_unicode_and_cancel_discards_the_draft() {
+        let mut app = App::default();
+        app.begin_add();
+        app.insert_add_text("doi:世界🙂\n");
+        let add = app.add.as_mut().unwrap();
+        add.buffer.left();
+        add.buffer.backspace();
+        assert_eq!(add.buffer.text(), "doi:世界 ");
+
+        app.cancel_add();
+        assert!(app.add.is_none());
+    }
+
+    #[test]
+    fn pending_add_rejects_edits_resubmission_and_cancel() {
+        let (_sender, receiver) = mpsc::channel();
+        let mut app = App {
+            add: Some(AddState {
+                buffer: TextBuffer::new("doi:10/example".into()),
+                result: Some(receiver),
+            }),
+            ..Default::default()
+        };
+
+        app.insert_add_text("changed");
+        app.submit_add();
+        app.cancel_add();
+
+        let add = app.add.as_ref().unwrap();
+        assert!(add.busy());
+        assert_eq!(add.buffer.text(), "doi:10/example");
     }
 
     #[test]

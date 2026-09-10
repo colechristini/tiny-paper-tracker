@@ -43,6 +43,7 @@ struct ListRequest<'a> {
     status: &'a str,
     group: Option<&'a str>,
     query: &'a str,
+    note_filter: &'a str,
 }
 #[derive(Debug, Serialize)]
 struct StatusRequest<'a> {
@@ -63,6 +64,13 @@ struct RenameRequest<'a> {
     op: &'static str,
     id: &'a str,
     title: &'a str,
+}
+#[derive(Debug, Serialize)]
+struct AddRequest<'a> {
+    version: u64,
+    op: &'static str,
+    value: &'a str,
+    group_id: Option<&'a str>,
 }
 #[derive(Debug, Serialize)]
 struct GroupsRequest<'a> {
@@ -139,6 +147,19 @@ struct RecoverResponse {
     path: Option<String>,
     error: Option<crate::model::ErrorBody>,
 }
+#[derive(Debug, Deserialize)]
+struct AddResponse {
+    version: u64,
+    ok: bool,
+    item: Option<Item>,
+    created: Option<bool>,
+    error: Option<crate::model::ErrorBody>,
+}
+
+pub struct AddResult {
+    pub item: Item,
+    pub created: bool,
+}
 
 pub struct Bridge {
     child: Child,
@@ -193,6 +214,7 @@ impl Bridge {
         status: &str,
         group: Option<&str>,
         query: &str,
+        note_filter: &str,
     ) -> Result<ListData, BridgeError> {
         let response: ListResponse = self.request(&ListRequest {
             version: VERSION,
@@ -200,6 +222,7 @@ impl Bridge {
             status,
             group,
             query,
+            note_filter,
         })?;
         if !response.ok {
             return Err(BridgeError::Backend(
@@ -282,6 +305,39 @@ impl Bridge {
         response
             .item
             .ok_or_else(|| BridgeError::Backend("backend returned no item".into()))
+    }
+    pub fn add_item(
+        &mut self,
+        value: &str,
+        group_id: Option<&str>,
+    ) -> Result<AddResult, BridgeError> {
+        let response: AddResponse = self.request(&AddRequest {
+            version: VERSION,
+            op: "add_item",
+            value,
+            group_id,
+        })?;
+        if response.version != VERSION {
+            return Err(BridgeError::Backend(
+                "unsupported bridge protocol version".into(),
+            ));
+        }
+        if !response.ok {
+            return Err(BridgeError::Backend(
+                response
+                    .error
+                    .map(|e| e.message)
+                    .unwrap_or_else(|| "add request failed".into()),
+            ));
+        }
+        Ok(AddResult {
+            item: response
+                .item
+                .ok_or_else(|| BridgeError::Backend("backend returned no item".into()))?,
+            created: response
+                .created
+                .ok_or_else(|| BridgeError::Backend("backend returned no add outcome".into()))?,
+        })
     }
     pub fn set_item_groups(&mut self, id: &str, group_ids: &[String]) -> Result<Item, BridgeError> {
         let response: MutationResponse = self.request(&GroupsRequest {

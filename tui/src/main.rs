@@ -8,7 +8,11 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use lit_tui::completion;
-use lit_tui::{bridge::Bridge, state::App, ui};
+use lit_tui::{
+    bridge::Bridge,
+    state::{App, NoteFilter},
+    ui,
+};
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 use std::io;
 
@@ -64,7 +68,9 @@ fn run(
                     redraw = true;
                 }
                 Event::Paste(text) => {
-                    if app.rename.is_some() {
+                    if app.add.is_some() {
+                        app.insert_add_text(&text);
+                    } else if app.rename.is_some() {
                         app.insert_rename_text(&text);
                     } else if app.editor.as_ref().is_some_and(|e| !e.preview) {
                         app.insert_editor_text(&text);
@@ -77,6 +83,9 @@ fn run(
                 Event::Resize(_, _) => redraw = true,
                 _ => {}
             }
+        }
+        if app.poll_add(bridge) {
+            redraw = true;
         }
         if app.autosave_due() {
             let _ = app.save_editor(bridge);
@@ -91,6 +100,50 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
     }
     if app.editor.is_some() {
         handle_editor_key(app, bridge, key, area);
+        return;
+    }
+    if app.add.is_some() {
+        if app.add.as_ref().is_some_and(|add| add.busy()) {
+            return;
+        }
+        match key.code {
+            KeyCode::Esc => app.cancel_add(),
+            KeyCode::Enter => app.submit_add(),
+            KeyCode::Left => {
+                if let Some(add) = app.add.as_mut() {
+                    add.buffer.left()
+                }
+            }
+            KeyCode::Right => {
+                if let Some(add) = app.add.as_mut() {
+                    add.buffer.right()
+                }
+            }
+            KeyCode::Home => {
+                if let Some(add) = app.add.as_mut() {
+                    add.buffer.home()
+                }
+            }
+            KeyCode::End => {
+                if let Some(add) = app.add.as_mut() {
+                    add.buffer.end()
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(add) = app.add.as_mut() {
+                    add.buffer.backspace()
+                }
+            }
+            KeyCode::Delete => {
+                if let Some(add) = app.add.as_mut() {
+                    add.buffer.delete()
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.insert_add_text(&c.to_string())
+            }
+            _ => {}
+        }
         return;
     }
     if app.membership.is_some() {
@@ -166,8 +219,10 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         }
         return;
     }
+    app.notice = None;
     match key.code {
         KeyCode::Enter => app.open_editor(bridge),
+        KeyCode::Char('a') => app.begin_add(),
         KeyCode::F(2) | KeyCode::Char('R') => app.begin_rename(),
         KeyCode::Char('m') => app.begin_membership(),
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
@@ -192,6 +247,14 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         }
         KeyCode::Char('4') => {
             app.filter = lit_tui::state::StatusFilter::Read;
+            app.refresh(bridge);
+        }
+        KeyCode::Char('5') => {
+            app.toggle_note_filter(NoteFilter::HasNote);
+            app.refresh(bridge);
+        }
+        KeyCode::Char('6') => {
+            app.toggle_note_filter(NoteFilter::NoNote);
             app.refresh(bridge);
         }
         KeyCode::Char('g') => {
