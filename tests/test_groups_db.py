@@ -89,7 +89,7 @@ def test_v1_migration_preserves_all_item_state_and_fts(tmp_path: Path) -> None:
     create_v1_database(path)
 
     with Database(path) as db:
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 3
         item = db.get("lit_existing")
         assert item["authors"] == ["Existing Author"]
         assert item["metadata"] == {"legacy": True}
@@ -112,13 +112,13 @@ def test_concurrent_v1_migration_is_serialized(tmp_path: Path) -> None:
             return db.connection.execute("PRAGMA user_version").fetchone()[0]
 
     with ThreadPoolExecutor(max_workers=8) as executor:
-        assert list(executor.map(open_database, range(8))) == [2] * 8
+        assert list(executor.map(open_database, range(8))) == [3] * 8
 
 
 def test_new_schema_and_future_schema_rejection(tmp_path: Path) -> None:
     path = tmp_path / "new.sqlite"
     with Database(path) as db:
-        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.connection.execute("PRAGMA user_version").fetchone()[0] == 3
         indexes = {
             row["name"]
             for row in db.connection.execute("PRAGMA index_list('item_groups')").fetchall()
@@ -126,9 +126,9 @@ def test_new_schema_and_future_schema_rejection(tmp_path: Path) -> None:
         assert "item_groups_item_id_idx" in indexes
 
     connection = sqlite3.connect(path)
-    connection.execute("PRAGMA user_version = 3")
+    connection.execute("PRAGMA user_version = 4")
     connection.close()
-    with pytest.raises(DatabaseError, match="unsupported database schema version 3"):
+    with pytest.raises(DatabaseError, match="unsupported database schema version 4"):
         Database(path)
 
 

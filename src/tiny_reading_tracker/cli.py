@@ -2,7 +2,10 @@
 
 import functools
 import json
+import os
+import shutil
 import sqlite3
+import subprocess
 import sys
 import unicodedata
 import webbrowser
@@ -166,6 +169,7 @@ def show_items(ctx, items):
 def list_items(
     ctx: typer.Context,
     read: bool = typer.Option(False, "--read", help="Show read items."),
+    reading: bool = typer.Option(False, "--reading", help="Show currently-reading items."),
     all_items: bool = typer.Option(False, "--all", help="Show all statuses."),
     tag: str | None = typer.Option(None),
     kind: str | None = typer.Option(None, "--type"),
@@ -173,13 +177,14 @@ def list_items(
     group: str | None = typer.Option(None, "--group", help="Filter by group name or ID."),
 ):
     """List the unread queue by default."""
-    if read and all_items:
-        raise ValueError("Use only one of --read and --all")
+    selected = [read, reading, all_items]
+    if sum(selected) > 1:
+        raise ValueError("Use only one of --read, --reading, and --all")
     with Database(ctx.obj["config"].db) as library:
         show_items(
             ctx,
             library.list_items(
-                None if all_items else "read" if read else "unread",
+                None if all_items else "read" if read else "reading" if reading else "unread",
                 tag=tag,
                 kind=kind,
                 no_note=no_note,
@@ -194,11 +199,58 @@ def search(
     ctx: typer.Context,
     query: str,
     read: bool = typer.Option(False, "--read"),
+    reading: bool = typer.Option(False, "--reading"),
     group: str | None = typer.Option(None, "--group", help="Search within a group."),
 ):
     """Search titles, authors, venues and tags using SQLite FTS5 syntax."""
+    if read and reading:
+        raise ValueError("Use only one of --read and --reading")
     with Database(ctx.obj["config"].db) as library:
-        show_items(ctx, library.search(query, status="read" if read else None, group=group))
+        show_items(
+            ctx,
+            library.search(
+                query, status="read" if read else "reading" if reading else None, group=group
+            ),
+        )
+
+
+@app.command()
+@handled
+def reading(
+    ctx: typer.Context,
+    queries: list[str] = typer.Argument(
+        ..., help="IDs, unique ID prefixes, or quoted title fragments."
+    ),
+):
+    """Mark saved items as currently being read."""
+    with Database(ctx.obj["config"].db) as library:
+        items = [library.get(query) for query in queries]
+        show_items(ctx, [library.set_status(item["id"], "reading") for item in items])
+
+
+@app.command()
+@handled
+def tui(ctx: typer.Context):
+    """Open the terminal interface using this installation's Python config."""
+    if ctx.obj["json"]:
+        raise ValueError("tui does not support --json")
+    binary = os.environ.get("LIT_TUI_BINARY") or shutil.which("lit-tui")
+    if binary is None:
+        for candidate in (
+            Path.cwd() / "tui" / "target" / "debug" / "lit-tui",
+            Path.cwd() / "tui" / "target" / "release" / "lit-tui",
+        ):
+            if candidate.is_file():
+                binary = str(candidate)
+                break
+    if binary is None:
+        raise ValueError("lit-tui is not installed; run cargo install --path tui --locked")
+    env = dict(os.environ)
+    env["LIT_TUI_PYTHON"] = sys.executable
+    env["LIT_TUI_DB"] = str(ctx.obj["config"].db)
+    result = subprocess.run([binary], env=env, check=False)
+    if result.returncode:
+        raise typer.Exit(result.returncode)
 
 
 def make_note(library, item, cfg, text):
