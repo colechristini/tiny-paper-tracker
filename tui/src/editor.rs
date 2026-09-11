@@ -35,6 +35,40 @@ impl TextBuffer {
             self.text.remove(self.cursor);
         }
     }
+    pub fn clear(&mut self) {
+        self.text.clear();
+        self.cursor = 0;
+    }
+    pub fn delete_line(&mut self) {
+        let line_start = self.text[..self.cursor]
+            .iter()
+            .rposition(|c| *c == '\n')
+            .map_or(0, |index| index + 1);
+        let line_end = self.text[self.cursor..]
+            .iter()
+            .position(|c| *c == '\n')
+            .map_or(self.text.len(), |offset| self.cursor + offset);
+        let (start, end) = if line_end < self.text.len() {
+            (line_start, line_end + 1)
+        } else if line_start > 0 {
+            (line_start - 1, self.text.len())
+        } else {
+            (line_start, line_end)
+        };
+        self.text.drain(start..end);
+        self.cursor = start.min(self.text.len());
+    }
+    pub fn delete_word_backwards(&mut self) {
+        let mut start = self.cursor;
+        while start > 0 && self.text[start - 1].is_whitespace() && self.text[start - 1] != '\n' {
+            start -= 1;
+        }
+        while start > 0 && !self.text[start - 1].is_whitespace() {
+            start -= 1;
+        }
+        self.text.drain(start..self.cursor);
+        self.cursor = start;
+    }
     pub fn left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
     }
@@ -114,5 +148,46 @@ mod tests {
     fn trailing_newline_is_preserved_without_edits() {
         let b = TextBuffer::new("a\n".into());
         assert_eq!(b.text(), "a\n");
+    }
+
+    #[test]
+    fn clear_and_delete_line_cover_first_middle_and_last_lines() {
+        let mut first = TextBuffer::new("first\nsecond\nlast".into());
+        first.delete_line();
+        assert_eq!(first.text(), "second\nlast");
+
+        let mut middle = TextBuffer::new("first\nsecond\nlast".into());
+        middle.cursor = 8;
+        middle.delete_line();
+        assert_eq!(middle.text(), "first\nlast");
+
+        let mut blank = TextBuffer::new("first\n\nlast".into());
+        blank.cursor = 6;
+        blank.delete_line();
+        assert_eq!(blank.text(), "first\nlast");
+
+        let mut last = TextBuffer::new("first\nsecond\nlast".into());
+        last.cursor = last.text.len();
+        last.delete_line();
+        assert_eq!(last.text(), "first\nsecond");
+
+        last.clear();
+        assert_eq!(last.text(), "");
+        assert_eq!(last.cursor, 0);
+    }
+
+    #[test]
+    fn backward_word_delete_is_unicode_safe_and_stops_at_newline() {
+        let mut b = TextBuffer::new("hé  世界\none".into());
+        b.cursor = "hé  世界".chars().count();
+        b.delete_word_backwards();
+        assert_eq!(b.text(), "hé  \none");
+        b.delete_word_backwards();
+        assert_eq!(b.text(), "\none");
+
+        let mut line = TextBuffer::new("hé\none".into());
+        line.cursor = 3;
+        line.delete_word_backwards();
+        assert_eq!(line.text(), "hé\none");
     }
 }

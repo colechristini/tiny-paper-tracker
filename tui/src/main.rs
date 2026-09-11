@@ -2,7 +2,8 @@ use crossterm::{
     cursor::Show,
     event::{
         self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers,
+        KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -19,19 +20,36 @@ use std::io;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bridge = Bridge::spawn()?;
     enable_raw_mode()?;
-    let _terminal_guard = TerminalGuard;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+    let keyboard_enhancement = execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+        )
+    )
+    .is_ok();
+    let _terminal_guard = TerminalGuard {
+        keyboard_enhancement,
+    };
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     let result = run(&mut bridge, &mut terminal);
     result.map_err(Into::into)
 }
 
-struct TerminalGuard;
+struct TerminalGuard {
+    keyboard_enhancement: bool,
+}
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let mut stdout = io::stdout();
+        if self.keyboard_enhancement {
+            let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+        }
         let _ = execute!(stdout, Show, DisableBracketedPaste, LeaveAlternateScreen);
     }
 }
@@ -106,6 +124,25 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         if app.add.as_ref().is_some_and(|add| add.busy()) {
             return;
         }
+        let command = key
+            .modifiers
+            .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if (command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+            || (ctrl && key.code == KeyCode::Char('u'))
+        {
+            if let Some(add) = app.add.as_mut() {
+                add.buffer.clear();
+            }
+            return;
+        }
+        if alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
+            if let Some(add) = app.add.as_mut() {
+                add.buffer.delete_word_backwards();
+            }
+            return;
+        }
         match key.code {
             KeyCode::Esc => app.cancel_add(),
             KeyCode::Enter => app.submit_add(),
@@ -139,9 +176,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
                     add.buffer.delete()
                 }
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.insert_add_text(&c.to_string())
-            }
+            KeyCode::Char(c) if !ctrl => app.insert_add_text(&c.to_string()),
             _ => {}
         }
         return;
@@ -155,6 +190,25 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         return;
     }
     if app.rename.is_some() {
+        let command = key
+            .modifiers
+            .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if (command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+            || (ctrl && key.code == KeyCode::Char('u'))
+        {
+            if let Some(rename) = app.rename.as_mut() {
+                rename.buffer.clear();
+            }
+            return;
+        }
+        if alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
+            if let Some(rename) = app.rename.as_mut() {
+                rename.buffer.delete_word_backwards();
+            }
+            return;
+        }
         match key.code {
             KeyCode::Esc => app.cancel_rename(),
             KeyCode::Enter => app.submit_rename(bridge),
@@ -188,9 +242,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
                     r.buffer.delete()
                 }
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.insert_rename_text(&c.to_string())
-            }
+            KeyCode::Char(c) if !ctrl => app.insert_rename_text(&c.to_string()),
             _ => {}
         }
         return;
@@ -202,6 +254,24 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         return;
     }
     if app.searching {
+        let command = key
+            .modifiers
+            .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if (command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+            || (ctrl && key.code == KeyCode::Char('u'))
+        {
+            app.search_input.clear();
+            return;
+        }
+        if alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
+            let mut buffer = lit_tui::editor::TextBuffer::new(app.search_input.clone());
+            buffer.end();
+            buffer.delete_word_backwards();
+            app.search_input = buffer.text();
+            return;
+        }
         match key.code {
             KeyCode::Esc => app.searching = false,
             KeyCode::Enter => {
@@ -212,9 +282,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
             KeyCode::Backspace => {
                 app.search_input.pop();
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.search_input.push(c)
-            }
+            KeyCode::Char(c) if !ctrl => app.search_input.push(c),
             _ => {}
         }
         return;
@@ -265,7 +333,9 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
             app.cycle_group(-1);
             app.refresh(bridge);
         }
-        KeyCode::Delete | KeyCode::Backspace => app.delete_selected(bridge),
+        KeyCode::Delete | KeyCode::Backspace if key.modifiers.is_empty() => {
+            app.delete_selected(bridge)
+        }
         KeyCode::Char('/') => {
             app.searching = true;
             app.search_input = app.query.clone();
@@ -278,6 +348,10 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
 
 fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let command = key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
     if ctrl && key.code == KeyCode::Char('v') {
         if let Some(editor) = app.editor.as_mut() {
             editor.completion = None;
@@ -401,6 +475,26 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
         KeyCode::Enter => {
             editor.buffer.insert("\n");
             changed = true;
+        }
+        KeyCode::Backspace | KeyCode::Delete if command => {
+            let before = editor.buffer.text();
+            editor.buffer.clear();
+            changed = before != editor.buffer.text();
+        }
+        KeyCode::Char('u') if ctrl => {
+            let before = editor.buffer.text();
+            editor.buffer.delete_line();
+            changed = before != editor.buffer.text();
+        }
+        KeyCode::Char('w') if ctrl => {
+            let before = editor.buffer.text();
+            editor.buffer.delete_word_backwards();
+            changed = before != editor.buffer.text();
+        }
+        KeyCode::Backspace | KeyCode::Delete if alt => {
+            let before = editor.buffer.text();
+            editor.buffer.delete_word_backwards();
+            changed = before != editor.buffer.text();
         }
         KeyCode::Backspace => {
             let before = editor.buffer.text();
