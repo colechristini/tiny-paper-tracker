@@ -69,6 +69,40 @@ impl TextBuffer {
         self.text.drain(start..self.cursor);
         self.cursor = start;
     }
+    pub fn insert_newline_with_list_continuation(&mut self) {
+        let line_start = self.text[..self.cursor]
+            .iter()
+            .rposition(|c| *c == '\n')
+            .map_or(0, |index| index + 1);
+        let line_end = self.text[self.cursor..]
+            .iter()
+            .position(|c| *c == '\n')
+            .map_or(self.text.len(), |offset| self.cursor + offset);
+        let line = &self.text[line_start..line_end];
+        let before_cursor = &self.text[line_start..self.cursor];
+        let Some((marker_start, marker_end, continuation)) = list_marker(before_cursor) else {
+            self.text.insert(self.cursor, '\n');
+            self.cursor += 1;
+            return;
+        };
+        if line[marker_end..]
+            .iter()
+            .all(|character| character.is_whitespace())
+        {
+            let marker_start_absolute = line_start + marker_start;
+            let marker_end_absolute = line_start + marker_end;
+            self.text.drain(marker_start_absolute..marker_end_absolute);
+            self.cursor -= marker_end - marker_start;
+            self.text.insert(self.cursor, '\n');
+            self.cursor += 1;
+            return;
+        }
+        self.text.insert(self.cursor, '\n');
+        self.cursor += 1;
+        self.text
+            .splice(self.cursor..self.cursor, continuation.chars());
+        self.cursor += continuation.chars().count();
+    }
     pub fn left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
     }
@@ -131,6 +165,75 @@ impl TextBuffer {
         self.text[start..self.cursor].iter().collect()
     }
 }
+
+fn list_marker(line: &[char]) -> Option<(usize, usize, String)> {
+    let marker_start = line
+        .iter()
+        .take_while(|character| **character == ' ' || **character == '\t')
+        .count();
+    let rest = &line[marker_start..];
+    let indentation = line[..marker_start].iter().collect::<String>();
+    if rest.starts_with(&['-', ' ']) {
+        return Some((marker_start, marker_start + 2, format!("{indentation}- ")));
+    }
+    let separator = rest.iter().position(|character| *character == '.')?;
+    if separator + 1 >= rest.len() || rest[separator + 1] != ' ' || separator == 0 {
+        return None;
+    }
+    let token = &rest[..separator];
+    let marker_end = marker_start + separator + 2;
+    if token.iter().all(|character| character.is_ascii_digit()) {
+        let token_text = token.iter().collect::<String>();
+        let next = token_text
+            .parse::<u64>()
+            .ok()
+            .and_then(|number| number.checked_add(1))
+            .map_or(token_text, |number| number.to_string());
+        return Some((marker_start, marker_end, format!("{indentation}{next}. ")));
+    }
+    if token.len() <= 2
+        && token
+            .iter()
+            .all(|character| character.is_ascii_alphabetic())
+    {
+        let next = increment_letters(token)?;
+        return Some((marker_start, marker_end, format!("{indentation}{next}. ")));
+    }
+    None
+}
+
+fn increment_letters(token: &[char]) -> Option<String> {
+    let uppercase = token[0].is_ascii_uppercase();
+    let mut value: Vec<u8> = token
+        .iter()
+        .map(|character| character.to_ascii_lowercase() as u8 - b'a')
+        .collect();
+    for index in (0..value.len()).rev() {
+        if value[index] < 25 {
+            value[index] += 1;
+            return Some(
+                value
+                    .into_iter()
+                    .map(|character| {
+                        let character = (b'a' + character) as char;
+                        if uppercase {
+                            character.to_ascii_uppercase()
+                        } else {
+                            character
+                        }
+                    })
+                    .collect(),
+            );
+        }
+        value[index] = 0;
+    }
+    let character = if uppercase { 'A' } else { 'a' };
+    Some(
+        std::iter::once(character)
+            .chain(value.into_iter().map(|_| character))
+            .collect(),
+    )
+}
 #[cfg(test)]
 mod tests {
     use super::TextBuffer;
@@ -189,5 +292,46 @@ mod tests {
         line.cursor = 3;
         line.delete_word_backwards();
         assert_eq!(line.text(), "hé\none");
+    }
+
+    #[test]
+    fn list_enter_continues_markers_and_preserves_unicode_split() {
+        let mut bullet = TextBuffer::new("  - hé世界".into());
+        bullet.cursor = "  - hé".chars().count();
+        bullet.insert_newline_with_list_continuation();
+        assert_eq!(bullet.text(), "  - hé\n  - 世界");
+
+        let mut number = TextBuffer::new("9. item".into());
+        number.cursor = number.text().chars().count();
+        number.insert_newline_with_list_continuation();
+        assert_eq!(number.text(), "9. item\n10. ");
+
+        let mut letter = TextBuffer::new("a. item".into());
+        letter.cursor = letter.text().chars().count();
+        letter.insert_newline_with_list_continuation();
+        assert_eq!(letter.text(), "a. item\nb. ");
+
+        let mut boundary = TextBuffer::new("z. item".into());
+        boundary.cursor = boundary.text().chars().count();
+        boundary.insert_newline_with_list_continuation();
+        assert_eq!(boundary.text(), "z. item\naa. ");
+    }
+
+    #[test]
+    fn list_enter_exits_empty_items_and_ignores_non_markers_or_marker_cursor() {
+        let mut empty = TextBuffer::new("\t- ".into());
+        empty.cursor = empty.text().chars().count();
+        empty.insert_newline_with_list_continuation();
+        assert_eq!(empty.text(), "\t\n");
+
+        let mut ordinary = TextBuffer::new("words. text".into());
+        ordinary.cursor = ordinary.text().chars().count();
+        ordinary.insert_newline_with_list_continuation();
+        assert_eq!(ordinary.text(), "words. text\n");
+
+        let mut inside_marker = TextBuffer::new("- item".into());
+        inside_marker.cursor = 1;
+        inside_marker.insert_newline_with_list_continuation();
+        assert_eq!(inside_marker.text(), "-\n item");
     }
 }

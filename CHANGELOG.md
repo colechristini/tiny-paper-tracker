@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Continue bullet, numbered, and lettered lists when pressing Return in notes;
+  preserve indentation and end the list on an empty item.
+- Show checked memberships as solid white squares.
+
 ## [0.4.0] — 2026-09-10
 
 - Add URLs and identifiers from the list with `a`; metadata resolution runs in a
