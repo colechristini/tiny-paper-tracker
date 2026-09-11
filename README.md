@@ -201,7 +201,7 @@ stable item ID in the filename. New files use `Summary` and `Notes` sections;
 frontmatter records the item and creation time. Existing writing is preserved,
 and the CLI append operation never replaces it. The TUI records created and
 modified timestamps, autosaves after a short idle period, saves before leaving
-the editor, and writes a recovery copy with `Ctrl-E` when a save conflict
+the editor, and writes a recovery copy with `Ctrl-G` when a save conflict
 occurs. Atomic saves preserve file permissions and detect edits or deletion
 before replacement. Cooperative TUI/CLI writers are serialized; an editor
 that does not use the lock can still race the final check on filesystems
@@ -218,13 +218,18 @@ key.
 preserved. Press `Return` on an empty list item to end the list.
 
 Long lines wrap to the note pane's width without adding newlines to the file.
-`Cmd-B` inserts `**…**` for bold and `Cmd-I` inserts `*…*` for italic, placing
+`Ctrl-B` inserts `**…**` for bold and `Ctrl-T` inserts `*…*` for italic, placing
 the cursor inside the markers. Press the same shortcut at the closing marker
-to continue typing outside it. Command shortcuts require a terminal that
-forwards the Command modifier; you can also type the Markdown markers directly.
-`Option-Left/Right` moves by word, and `Cmd-Left/Right` moves to the start or
-end of the current text line. These navigation shortcuts also work in the add,
-rename, and search fields.
+to continue typing outside it. `Ctrl-I` also works for italic, but traditional
+terminals send it as `Tab`; when link completion is open, that key selects a
+link. `Cmd-B/I` remain aliases when the terminal forwards Command keys.
+`Ctrl-P/N` jumps to the previous word start/next word end; `Ctrl-Left/Right`
+and `Option-Left/Right` also work when forwarded by the terminal. In link
+completion, `Ctrl-P/N` selects the previous/next candidate instead.
+`Ctrl-A/E` moves to the start/end of the current text line, with
+`Cmd-Left/Right` as aliases. Navigation shortcuts also work in the add,
+rename, and search fields. `Ctrl-U` clears a line/field and `Ctrl-W` removes
+the previous word. `Ctrl-G` saves a recovery copy after a note save conflict.
 
 SQLite stores only the note path. Registered absolute paths and legacy relative
 vault paths remain supported, while new notes can live anywhere in the flat

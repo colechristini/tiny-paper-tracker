@@ -330,19 +330,36 @@ fn is_unmodified_text(key: KeyEvent) -> bool {
 }
 
 fn apply_text_navigation(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEvent) -> bool {
-    let command = key
-        .modifiers
-        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    if apply_modified_text_navigation(buffer, key) {
+        return true;
+    }
     match key.code {
-        KeyCode::Left if command => buffer.home(),
-        KeyCode::Right if command => buffer.end(),
-        KeyCode::Left if alt => buffer.word_left(),
-        KeyCode::Right if alt => buffer.word_right(),
         KeyCode::Left if key.modifiers.is_empty() => buffer.left(),
         KeyCode::Right if key.modifiers.is_empty() => buffer.right(),
         KeyCode::Home if key.modifiers.is_empty() => buffer.home(),
         KeyCode::End if key.modifiers.is_empty() => buffer.end(),
+        _ => return false,
+    }
+    true
+}
+
+fn apply_modified_text_navigation(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEvent) -> bool {
+    let command = key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Left if command => buffer.home(),
+        KeyCode::Right if command => buffer.end(),
+        KeyCode::Char('a' | 'A') if ctrl => buffer.home(),
+        KeyCode::Char('e' | 'E') if ctrl => buffer.end(),
+        KeyCode::Left if alt || ctrl => buffer.word_left(),
+        KeyCode::Right if alt || ctrl => buffer.word_right(),
+        KeyCode::Char('b' | 'B') if alt => buffer.word_left(),
+        KeyCode::Char('f' | 'F') if alt => buffer.word_right(),
+        KeyCode::Char('p' | 'P') if ctrl => buffer.word_left(),
+        KeyCode::Char('n' | 'N') if ctrl => buffer.word_right(),
         _ => return false,
     }
     true
@@ -391,19 +408,24 @@ fn apply_note_edit_shortcut(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEv
 }
 
 fn apply_formatting_shortcut(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEvent) -> bool {
-    if !key
+    let command = key
         .modifiers
-        .intersects(KeyModifiers::SUPER | KeyModifiers::META)
-    {
-        return false;
-    }
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let marker = match key.code {
-        KeyCode::Char('b' | 'B') => "**",
-        KeyCode::Char('i' | 'I') => "*",
+        KeyCode::Char('b' | 'B') if command || ctrl => "**",
+        KeyCode::Char('i' | 'I') if command || ctrl => "*",
+        KeyCode::Char('t' | 'T') if ctrl => "*",
+        KeyCode::Tab if key.modifiers.is_empty() => "*",
         _ => return false,
     };
     buffer.insert_pair(marker);
     true
+}
+
+fn accepts_completion(key: KeyEvent) -> bool {
+    key.code == KeyCode::Tab
+        || (key.code == KeyCode::Char('i') && key.modifiers.contains(KeyModifiers::CONTROL))
 }
 
 fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
@@ -419,7 +441,7 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
         let _ = app.save_editor(bridge);
         return;
     }
-    if ctrl && key.code == KeyCode::Char('e') {
+    if ctrl && key.code == KeyCode::Char('g') {
         app.recover_editor(bridge);
         return;
     }
@@ -478,14 +500,6 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
         }
         return;
     }
-    let command = key
-        .modifiers
-        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
-    if apply_formatting_shortcut(&mut editor.buffer, key) {
-        editor.mark_changed();
-        update_completion(editor, bridge);
-        return;
-    }
     if let Some(completion) = editor.completion.as_mut() {
         match key.code {
             KeyCode::Esc => {
@@ -503,7 +517,7 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
                 }
                 return;
             }
-            KeyCode::Tab => {
+            _ if accepts_completion(key) => {
                 let current = completion::extract(&editor.buffer);
                 if current.as_ref().map(|(s, e, q)| (*s, *e, q))
                     != Some((completion.start, completion.end, &completion.query))
@@ -529,6 +543,11 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
             _ => {}
         }
     }
+    if apply_formatting_shortcut(&mut editor.buffer, key) {
+        editor.mark_changed();
+        update_completion(editor, bridge);
+        return;
+    }
     let mut changed = false;
     let mut moved = false;
     let text_area = ui::editor_text_area(area);
@@ -536,6 +555,8 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
     let page_rows = text_area.height.saturating_sub(2).max(1) as usize;
     if apply_note_edit_shortcut(&mut editor.buffer, key) {
         changed = true;
+    } else if apply_modified_text_navigation(&mut editor.buffer, key) {
+        moved = true;
     } else {
         match key.code {
             KeyCode::Char(c) if is_unmodified_text(key) => {
@@ -555,22 +576,6 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
                 let before = editor.buffer.text();
                 editor.buffer.delete();
                 changed = before != editor.buffer.text();
-            }
-            KeyCode::Left if command => {
-                editor.buffer.home();
-                moved = true;
-            }
-            KeyCode::Right if command => {
-                editor.buffer.end();
-                moved = true;
-            }
-            KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
-                editor.buffer.word_left();
-                moved = true;
-            }
-            KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
-                editor.buffer.word_right();
-                moved = true;
             }
             KeyCode::Left if key.modifiers.is_empty() => {
                 editor.buffer.left();
@@ -662,7 +667,7 @@ fn wrapped_lines(text: &ratatui::text::Text<'static>, width: u16) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_formatting_shortcut, apply_note_edit_shortcut, apply_search_edit,
+        accepts_completion, apply_formatting_shortcut, apply_note_edit_shortcut, apply_search_edit,
         apply_text_navigation, is_plain_delete, is_unmodified_text, wrapped_lines,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -727,10 +732,58 @@ mod tests {
             KeyCode::Char('b'),
             KeyModifiers::SUPER
         )));
-        assert!(!apply_formatting_shortcut(
+        assert!(apply_formatting_shortcut(
             &mut buffer,
             KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL)
         ));
+        assert!(apply_formatting_shortcut(
+            &mut buffer,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)
+        ));
+        assert!(apply_formatting_shortcut(
+            &mut buffer,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)
+        ));
+        assert!(accepts_completion(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::NONE
+        )));
+        assert!(accepts_completion(KeyEvent::new(
+            KeyCode::Char('i'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!accepts_completion(KeyEvent::new(
+            KeyCode::Char('t'),
+            KeyModifiers::CONTROL
+        )));
+
+        let mut portable = TextBuffer::new("first middle last".into());
+        portable.end();
+        assert!(apply_text_navigation(
+            &mut portable,
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(portable.cursor, 0);
+        assert!(apply_text_navigation(
+            &mut portable,
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(portable.cursor, "first".chars().count());
+        assert!(apply_text_navigation(
+            &mut portable,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL)
+        ));
+        assert_eq!(portable.cursor, "first middle".chars().count());
+        assert!(apply_text_navigation(
+            &mut portable,
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(portable.cursor, "first ".chars().count());
+        assert!(apply_text_navigation(
+            &mut portable,
+            KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(portable.cursor, portable.text().chars().count());
     }
 
     #[test]

@@ -766,7 +766,7 @@ impl App {
             Err(e) => {
                 editor.dirty_since = None;
                 let message = format!(
-                    "Save failed: {e}. Ctrl-S retries; Ctrl-E saves a recovery copy; Esc retries save."
+                    "Save failed: {e}. Ctrl-S retries; Ctrl-G saves a recovery copy; Esc retries save."
                 );
                 self.error = Some(message);
                 Err(e.to_string())
