@@ -162,10 +162,12 @@ file intact. Press `F2` or uppercase `R` to rename the selected title inline;
 `Enter` saves and `Esc` cancels. Text deletion in the editor and search input
 keeps its normal meaning.
 Press `m` in list mode to edit group memberships. Move with the arrow keys or
-`j`/`k`, toggle with `Space`, apply with `Enter`, or cancel with `Esc`. Checkboxes
-show direct memberships: selecting a subgroup includes the paper in its
-parent's filtered view without checking the parent. Create groups with
-`lit group create` before assigning them in the picker.
+`j`/`k`, toggle with `Space`, apply with `Enter`, or cancel with `Esc`. Selecting
+a subgroup checks its parent in the draft; clearing a parent clears its child
+checks, while selecting a parent does not select its children. A legacy item
+that belongs only to a child opens with the parent checked in the draft. Changes
+are written only when you press `Enter`. Create groups with `lit group create`
+before assigning them in the picker.
 
 Existing databases automatically migrate from schema 1, 2, or 3 to schema 4
 in a transaction when opened. Existing metadata, groups, tags, notes, and
@@ -204,6 +206,12 @@ occurs. Atomic saves preserve file permissions and detect edits or deletion
 before replacement. Cooperative TUI/CLI writers are serialized; an editor
 that does not use the lock can still race the final check on filesystems
 without a compare-and-swap operation.
+
+In the TUI editor, `Cmd-Delete` clears the current line (with `Ctrl-U` as the
+terminal fallback), and `Option-Delete` deletes the previous word (with
+`Ctrl-W` as the terminal fallback). These shortcuts also apply to the add,
+rename, and search inputs where the terminal sends the corresponding control
+key.
 
 SQLite stores only the note path. Registered absolute paths and legacy relative
 vault paths remain supported, while new notes can live anywhere in the flat

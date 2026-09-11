@@ -151,8 +151,15 @@ individual failures and note paths when relevant.
 The terminal interface shows loose items at the top without a heading, followed
 by named subgroup sections. In the All view, subgroup headings include their
 parent's name. `g` and `h` cycle root groups and All. Press `m` in list mode to
-edit memberships: Space toggles, Enter applies, and Esc cancels. Checkboxes show
-direct membership only, so a child assignment does not check the parent.
+edit memberships: Space toggles, Enter applies, and Esc cancels.
+Selecting a child checks its parent in the draft; clearing a parent clears its
+children, while selecting a parent does not select its children. Legacy
+child-only membership opens with the parent checked in the draft, and changes
+are written only on Enter.
+
+In the TUI editor, `Cmd-Delete` clears the current line (`Ctrl-U` fallback) and
+`Option-Delete` deletes the previous word (`Ctrl-W` fallback); the same control
+keys work in add, rename, and search inputs.
 
 The optional TUI links workflow searches all saved titles, accepts `@title`
 completion with Tab, and inserts a portable relative Markdown file link when a
