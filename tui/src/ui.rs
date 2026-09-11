@@ -73,7 +73,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else if let Some(notice) = &app.notice {
         sanitize(notice)
     } else if app.searching {
-        format!("Search: {}", sanitize(&app.search_input))
+        format!(
+            "Search: {}",
+            rename_input(
+                &app.search_input,
+                frame.area().width.saturating_sub(10) as usize
+            )
+        )
     } else {
         let query_label = if app.query.is_empty() {
             "no search".to_string()
@@ -344,13 +350,7 @@ fn draw_editor(frame: &mut Frame, app: &App) {
         Paragraph::new(header).block(Block::default().title(" Note ").borders(Borders::ALL)),
         editor_area[0],
     );
-    let text = editor.buffer.text();
-    let (line, _) = editor.buffer.line_col();
     let visible_height = editor_area[1].height.saturating_sub(2) as usize;
-    let vscroll = editor
-        .scroll
-        .min(line as u16)
-        .max(line.saturating_sub(visible_height.saturating_sub(1)) as u16);
     if editor.preview {
         let vscroll = editor.preview_scroll;
         let preview = editor
@@ -383,17 +383,23 @@ fn draw_editor(frame: &mut Frame, app: &App) {
         );
         return;
     }
-    let lines = text
-        .split('\n')
-        .map(sanitize)
+    let inner_width = editor_area[1].width.saturating_sub(2) as usize;
+    let wrap_width = inner_width.saturating_sub(1).max(1);
+    let layout = editor.buffer.visual_layout(wrap_width);
+    let (visual_row, visual_col) = editor.buffer.visual_position(wrap_width);
+    let vscroll = editor
+        .scroll
+        .min(visual_row as u16)
+        .max(visual_row.saturating_sub(visible_height.saturating_sub(1)) as u16);
+    let lines = layout
+        .rows
+        .iter()
+        .map(|row| sanitize(&row.text))
         .collect::<Vec<_>>()
         .join("\n");
-    let inner_width = editor_area[1].width.saturating_sub(2) as usize;
-    let visual_col = editor.buffer.line_prefix().width();
-    let hscroll = visual_col.saturating_sub(inner_width.saturating_sub(1));
     frame.render_widget(
         Paragraph::new(lines)
-            .scroll((editor.scroll, hscroll as u16))
+            .scroll((vscroll, 0))
             .block(Block::default().borders(Borders::ALL)),
         editor_area[1],
     );
@@ -448,13 +454,10 @@ fn draw_editor(frame: &mut Frame, app: &App) {
     let cursor_y = editor_area[1]
         .y
         .saturating_add(1)
-        .saturating_add(line as u16)
+        .saturating_add(visual_row as u16)
         .saturating_sub(vscroll);
     if cursor_y < editor_area[1].bottom().saturating_sub(1) && editor_area[1].width > 2 {
-        frame.set_cursor_position((
-            editor_area[1].x + 1 + visual_col.saturating_sub(hscroll) as u16,
-            cursor_y,
-        ));
+        frame.set_cursor_position((editor_area[1].x + 1 + visual_col as u16, cursor_y));
     }
     frame.render_widget(
         error_or_hints(
@@ -465,12 +468,30 @@ fn draw_editor(frame: &mut Frame, app: &App) {
                 ("Esc", " save and return"),
                 ("Ctrl-Q", " save and quit"),
                 ("Ctrl-E", " recovery copy"),
-                ("arrows/Home/End/PageUp/PageDown", " edit"),
+                ("Cmd-B/I", " format"),
+                ("Alt-←/→", " word"),
+                ("Cmd-←/→", " line"),
+                ("arrows/Home/End/PageUp/PageDown", " move"),
             ],
         )
         .block(Block::default().borders(Borders::TOP)),
         chunks[1],
     );
+}
+
+pub fn editor_text_area(area: Rect) -> Rect {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(4)])
+        .split(area);
+    let panes = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .split(chunks[0]);
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(1)])
+        .split(panes[1])[1]
 }
 fn list_state(app: &App) -> ratatui::widgets::ListState {
     let mut state = ratatui::widgets::ListState::default();
@@ -679,6 +700,49 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("Created: 2026-09-10T08:00:00Z"));
         assert!(rendered.contains("Edited: 2026-09-10T09:30:00Z"));
+    }
+
+    #[test]
+    fn wrapped_editor_keeps_unicode_cursor_visible_across_resize_without_changing_text() {
+        let original = "alpha beta gamma delta epsilon zeta eta theta iota kappa tail🙂";
+        let mut buffer = TextBuffer::new(original.into());
+        buffer.end();
+        let app = App {
+            editor: Some(EditorState {
+                item_id: "x".into(),
+                buffer,
+                revision: "r".into(),
+                path: "note.md".into(),
+                created_at: None,
+                modified_at: "now".into(),
+                original: original.into(),
+                dirty_since: None,
+                scroll: 0,
+                preview: false,
+                rendered: None,
+                preview_scroll: 0,
+                completion: None,
+            }),
+            ..Default::default()
+        };
+        let backend = TestBackend::new(60, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let small_area = super::editor_text_area(Rect::new(0, 0, 60, 12));
+        let small_cursor = terminal.backend().cursor_position();
+        assert!(small_cursor.x > small_area.x && small_cursor.x < small_area.right() - 1);
+        assert!(small_cursor.y > small_area.y && small_cursor.y < small_area.bottom() - 1);
+        assert!(buffer_text(&terminal).contains("tail"));
+
+        terminal.backend_mut().resize(100, 24);
+        terminal.resize(Rect::new(0, 0, 100, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let large_area = super::editor_text_area(Rect::new(0, 0, 100, 24));
+        let large_cursor = terminal.backend().cursor_position();
+        assert!(large_cursor.x > large_area.x && large_cursor.x < large_area.right() - 1);
+        assert!(large_cursor.y > large_area.y && large_cursor.y < large_area.bottom() - 1);
+        assert_eq!(app.editor.as_ref().unwrap().buffer.text(), original);
     }
 
     #[test]

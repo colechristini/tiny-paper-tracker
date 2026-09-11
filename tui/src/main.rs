@@ -91,7 +91,7 @@ fn run(
                     } else if app.rename.is_some() {
                         app.insert_rename_text(&text);
                     } else if app.searching {
-                        app.search_input.push_str(&text.replace(['\r', '\n'], " "));
+                        app.search_input.insert(&text.replace(['\r', '\n'], " "));
                     } else if app.editor.as_ref().is_some_and(|e| !e.preview) {
                         app.insert_editor_text(&text);
                         if let Some(editor) = app.editor.as_mut() {
@@ -151,29 +151,16 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
             }
             return;
         }
+        if app
+            .add
+            .as_mut()
+            .is_some_and(|add| apply_text_navigation(&mut add.buffer, key))
+        {
+            return;
+        }
         match key.code {
             KeyCode::Esc => app.cancel_add(),
             KeyCode::Enter => app.submit_add(),
-            KeyCode::Left => {
-                if let Some(add) = app.add.as_mut() {
-                    add.buffer.left()
-                }
-            }
-            KeyCode::Right => {
-                if let Some(add) = app.add.as_mut() {
-                    add.buffer.right()
-                }
-            }
-            KeyCode::Home => {
-                if let Some(add) = app.add.as_mut() {
-                    add.buffer.home()
-                }
-            }
-            KeyCode::End => {
-                if let Some(add) = app.add.as_mut() {
-                    add.buffer.end()
-                }
-            }
             KeyCode::Backspace => {
                 if let Some(add) = app.add.as_mut() {
                     add.buffer.backspace()
@@ -184,7 +171,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
                     add.buffer.delete()
                 }
             }
-            KeyCode::Char(c) if !ctrl => app.insert_add_text(&c.to_string()),
+            KeyCode::Char(c) if is_unmodified_text(key) => app.insert_add_text(&c.to_string()),
             _ => {}
         }
         return;
@@ -223,29 +210,16 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
             }
             return;
         }
+        if app
+            .rename
+            .as_mut()
+            .is_some_and(|rename| apply_text_navigation(&mut rename.buffer, key))
+        {
+            return;
+        }
         match key.code {
             KeyCode::Esc => app.cancel_rename(),
             KeyCode::Enter => app.submit_rename(bridge),
-            KeyCode::Left => {
-                if let Some(r) = app.rename.as_mut() {
-                    r.buffer.left()
-                }
-            }
-            KeyCode::Right => {
-                if let Some(r) = app.rename.as_mut() {
-                    r.buffer.right()
-                }
-            }
-            KeyCode::Home => {
-                if let Some(r) = app.rename.as_mut() {
-                    r.buffer.home()
-                }
-            }
-            KeyCode::End => {
-                if let Some(r) = app.rename.as_mut() {
-                    r.buffer.end()
-                }
-            }
             KeyCode::Backspace => {
                 if let Some(r) = app.rename.as_mut() {
                     r.buffer.backspace()
@@ -256,7 +230,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
                     r.buffer.delete()
                 }
             }
-            KeyCode::Char(c) if !ctrl => app.insert_rename_text(&c.to_string()),
+            KeyCode::Char(c) if is_unmodified_text(key) => app.insert_rename_text(&c.to_string()),
             _ => {}
         }
         return;
@@ -268,21 +242,21 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         return;
     }
     if app.searching {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if apply_search_edit(&mut app.search_input, key) {
             return;
         }
         match key.code {
             KeyCode::Esc => app.searching = false,
             KeyCode::Enter => {
-                app.query = app.search_input.clone();
+                app.query = app.search_input.text();
                 app.searching = false;
                 app.refresh(bridge);
             }
             KeyCode::Backspace => {
-                app.search_input.pop();
+                app.search_input.backspace();
             }
-            KeyCode::Char(c) if !ctrl => app.search_input.push(c),
+            KeyCode::Delete => app.search_input.delete(),
+            KeyCode::Char(c) if is_unmodified_text(key) => app.search_input.insert(&c.to_string()),
             _ => {}
         }
         return;
@@ -336,7 +310,8 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         KeyCode::Delete | KeyCode::Backspace if is_plain_delete(key) => app.delete_selected(bridge),
         KeyCode::Char('/') => {
             app.searching = true;
-            app.search_input = app.query.clone();
+            app.search_input = lit_tui::editor::TextBuffer::new(app.query.clone());
+            app.search_input.end();
         }
         KeyCode::Char('?') => app.help = true,
         KeyCode::Char('f') => app.refresh(bridge),
@@ -348,7 +323,32 @@ fn is_plain_delete(key: KeyEvent) -> bool {
     matches!(key.code, KeyCode::Delete | KeyCode::Backspace) && key.modifiers.is_empty()
 }
 
-fn apply_search_edit(search: &mut String, key: KeyEvent) -> bool {
+fn is_unmodified_text(key: KeyEvent) -> bool {
+    !key.modifiers.intersects(
+        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::META,
+    )
+}
+
+fn apply_text_navigation(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEvent) -> bool {
+    let command = key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    match key.code {
+        KeyCode::Left if command => buffer.home(),
+        KeyCode::Right if command => buffer.end(),
+        KeyCode::Left if alt => buffer.word_left(),
+        KeyCode::Right if alt => buffer.word_right(),
+        KeyCode::Left if key.modifiers.is_empty() => buffer.left(),
+        KeyCode::Right if key.modifiers.is_empty() => buffer.right(),
+        KeyCode::Home if key.modifiers.is_empty() => buffer.home(),
+        KeyCode::End if key.modifiers.is_empty() => buffer.end(),
+        _ => return false,
+    }
+    true
+}
+
+fn apply_search_edit(search: &mut lit_tui::editor::TextBuffer, key: KeyEvent) -> bool {
     let command = key
         .modifiers
         .intersects(KeyModifiers::SUPER | KeyModifiers::META);
@@ -363,13 +363,10 @@ fn apply_search_edit(search: &mut String, key: KeyEvent) -> bool {
     if (ctrl && key.code == KeyCode::Char('w'))
         || (alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
     {
-        let mut buffer = lit_tui::editor::TextBuffer::new(search.clone());
-        buffer.end();
-        buffer.delete_word_backwards();
-        *search = buffer.text();
+        search.delete_word_backwards();
         return true;
     }
-    false
+    apply_text_navigation(search, key)
 }
 
 fn apply_note_edit_shortcut(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEvent) -> bool {
@@ -391,6 +388,22 @@ fn apply_note_edit_shortcut(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEv
         return true;
     }
     false
+}
+
+fn apply_formatting_shortcut(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEvent) -> bool {
+    if !key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META)
+    {
+        return false;
+    }
+    let marker = match key.code {
+        KeyCode::Char('b' | 'B') => "**",
+        KeyCode::Char('i' | 'I') => "*",
+        _ => return false,
+    };
+    buffer.insert_pair(marker);
+    true
 }
 
 fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
@@ -465,6 +478,14 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
         }
         return;
     }
+    let command = key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    if apply_formatting_shortcut(&mut editor.buffer, key) {
+        editor.mark_changed();
+        update_completion(editor, bridge);
+        return;
+    }
     if let Some(completion) = editor.completion.as_mut() {
         match key.code {
             KeyCode::Esc => {
@@ -510,11 +531,14 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
     }
     let mut changed = false;
     let mut moved = false;
+    let text_area = ui::editor_text_area(area);
+    let wrap_width = text_area.width.saturating_sub(3).max(1) as usize;
+    let page_rows = text_area.height.saturating_sub(2).max(1) as usize;
     if apply_note_edit_shortcut(&mut editor.buffer, key) {
         changed = true;
     } else {
         match key.code {
-            KeyCode::Char(c) if !ctrl => {
+            KeyCode::Char(c) if is_unmodified_text(key) => {
                 editor.buffer.insert(&c.to_string());
                 changed = true;
             }
@@ -532,38 +556,54 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
                 editor.buffer.delete();
                 changed = before != editor.buffer.text();
             }
-            KeyCode::Left => {
-                editor.buffer.left();
-                moved = true;
-            }
-            KeyCode::Right => {
-                editor.buffer.right();
-                moved = true;
-            }
-            KeyCode::Up => {
-                editor.buffer.up();
-                moved = true;
-            }
-            KeyCode::Down => {
-                editor.buffer.down();
-                moved = true;
-            }
-            KeyCode::Home => {
+            KeyCode::Left if command => {
                 editor.buffer.home();
                 moved = true;
             }
-            KeyCode::End => {
+            KeyCode::Right if command => {
                 editor.buffer.end();
                 moved = true;
             }
-            KeyCode::PageUp => {
-                editor.buffer.page_up(10);
-                editor.scroll = editor.scroll.saturating_sub(10);
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+                editor.buffer.word_left();
                 moved = true;
             }
-            KeyCode::PageDown => {
-                editor.buffer.page_down(10);
-                editor.scroll = editor.scroll.saturating_add(10);
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+                editor.buffer.word_right();
+                moved = true;
+            }
+            KeyCode::Left if key.modifiers.is_empty() => {
+                editor.buffer.left();
+                moved = true;
+            }
+            KeyCode::Right if key.modifiers.is_empty() => {
+                editor.buffer.right();
+                moved = true;
+            }
+            KeyCode::Up if key.modifiers.is_empty() => {
+                editor.buffer.visual_up(wrap_width);
+                moved = true;
+            }
+            KeyCode::Down if key.modifiers.is_empty() => {
+                editor.buffer.visual_down(wrap_width);
+                moved = true;
+            }
+            KeyCode::Home if key.modifiers.is_empty() => {
+                editor.buffer.visual_home(wrap_width);
+                moved = true;
+            }
+            KeyCode::End if key.modifiers.is_empty() => {
+                editor.buffer.visual_end(wrap_width);
+                moved = true;
+            }
+            KeyCode::PageUp if key.modifiers.is_empty() => {
+                editor.buffer.visual_page_up(wrap_width, page_rows);
+                editor.scroll = editor.scroll.saturating_sub(page_rows as u16);
+                moved = true;
+            }
+            KeyCode::PageDown if key.modifiers.is_empty() => {
+                editor.buffer.visual_page_down(wrap_width, page_rows);
+                editor.scroll = editor.scroll.saturating_add(page_rows as u16);
                 moved = true;
             }
             _ => {}
@@ -621,7 +661,10 @@ fn wrapped_lines(text: &ratatui::text::Text<'static>, width: u16) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_note_edit_shortcut, apply_search_edit, is_plain_delete, wrapped_lines};
+    use super::{
+        apply_formatting_shortcut, apply_note_edit_shortcut, apply_search_edit,
+        apply_text_navigation, is_plain_delete, is_unmodified_text, wrapped_lines,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use lit_tui::editor::TextBuffer;
     use ratatui::text::Text;
@@ -651,11 +694,57 @@ mod tests {
             KeyModifiers::ALT
         )));
 
-        let mut search = "unicode 世界".to_string();
+        let mut search = TextBuffer::new("unicode 世界".into());
+        search.end();
         assert!(apply_search_edit(
             &mut search,
             KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)
         ));
-        assert_eq!(search, "unicode ");
+        assert_eq!(search.text(), "unicode ");
+    }
+
+    #[test]
+    fn command_formatting_and_modified_navigation_do_not_insert_plain_characters() {
+        let mut buffer = TextBuffer::new("one 世界  next".into());
+        buffer.cursor = 1;
+        assert!(apply_text_navigation(
+            &mut buffer,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::ALT)
+        ));
+        assert_eq!(buffer.cursor, 3);
+        assert!(apply_text_navigation(
+            &mut buffer,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::SUPER)
+        ));
+        assert_eq!(buffer.cursor, buffer.text().chars().count());
+
+        assert!(apply_formatting_shortcut(
+            &mut buffer,
+            KeyEvent::new(KeyCode::Char('b'), KeyModifiers::SUPER)
+        ));
+        assert!(buffer.text().ends_with("****"));
+        assert!(!is_unmodified_text(KeyEvent::new(
+            KeyCode::Char('b'),
+            KeyModifiers::SUPER
+        )));
+        assert!(!apply_formatting_shortcut(
+            &mut buffer,
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL)
+        ));
+    }
+
+    #[test]
+    fn search_buffer_supports_middle_edits_and_word_navigation() {
+        let mut search = TextBuffer::new("alpha 世界 omega".into());
+        search.cursor = "alpha ".chars().count();
+        search.insert("new ");
+        assert_eq!(search.text(), "alpha new 世界 omega");
+        assert!(apply_search_edit(
+            &mut search,
+            KeyEvent::new(KeyCode::Right, KeyModifiers::ALT)
+        ));
+        assert_eq!(search.cursor, "alpha new 世界".chars().count());
+        search.backspace();
+        assert_eq!(search.text(), "alpha new 世 omega");
     }
 }
