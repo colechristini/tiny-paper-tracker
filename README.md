@@ -217,6 +217,15 @@ key.
 `1. ` advances to `2. `, and `a. ` advances to `b. `. Indentation is
 preserved. Press `Return` on an empty list item to end the list.
 
+Long lines wrap to the note pane's width without adding newlines to the file.
+`Cmd-B` inserts `**…**` for bold and `Cmd-I` inserts `*…*` for italic, placing
+the cursor inside the markers. Press the same shortcut at the closing marker
+to continue typing outside it. Command shortcuts require a terminal that
+forwards the Command modifier; you can also type the Markdown markers directly.
+`Option-Left/Right` moves by word, and `Cmd-Left/Right` moves to the start or
+end of the current text line. These navigation shortcuts also work in the add,
+rename, and search fields.
+
 SQLite stores only the note path. Registered absolute paths and legacy relative
 vault paths remain supported, while new notes can live anywhere in the flat
 configured notes directory. A missing registered note is an error so the tool

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Wrap long lines visually in the note editor and add Command-B/Command-I
+  shortcuts for bold and italic Markdown.
+- Add Option-Left/Right word navigation and Command-Left/Right line navigation
+  in notes and text fields.
 - Continue bullet, numbered, and lettered lists when pressing Return in notes;
   preserve indentation and end the list on an empty item.
 - Show checked memberships as solid white squares.
