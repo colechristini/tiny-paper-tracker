@@ -216,17 +216,21 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 .iter()
                 .enumerate()
                 .map(|(i, (_, label))| {
-                    ListItem::new(format!(
-                        "{} {}",
-                        if picker.checked[i] { "☑" } else { "☐" },
-                        sanitize(label)
-                    ))
+                    let marker = if picker.checked[i] {
+                        Span::styled("■", Style::default().fg(Color::White))
+                    } else {
+                        Span::raw("☐")
+                    };
+                    ListItem::new(Line::from(vec![
+                        marker,
+                        Span::raw(format!(" {}", sanitize(label))),
+                    ]))
                 })
                 .collect()
         };
         let list = List::new(items)
             .highlight_symbol("› ")
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+            .highlight_style(Style::default().fg(Color::White).bg(Color::DarkGray));
         let mut state = ListState::default();
         if !picker.choices.is_empty() {
             state.select(Some(picker.selected));
@@ -844,7 +848,7 @@ mod tests {
                 choices: (0..count)
                     .map(|i| (format!("group-{i:02}"), format!("Group {i:02}")))
                     .collect(),
-                checked: vec![false; count],
+                checked: (0..count).map(|index| index == 0).collect(),
                 selected,
             }),
             ..Default::default()
@@ -929,7 +933,7 @@ mod tests {
             buffer
                 .content()
                 .iter()
-                .any(|cell| cell.symbol() == "☐" && cell.modifier.contains(Modifier::REVERSED))
+                .any(|cell| cell.symbol() == "☐" && cell.bg == Color::DarkGray)
         );
 
         terminal.backend_mut().resize(120, 40);
@@ -938,6 +942,24 @@ mod tests {
         let text = buffer_text(&terminal);
         assert!(text.contains("Group 02"));
         assert!(text.contains("Group 34"));
+        let checked_app = membership_app(1, 0);
+        let mut checked_terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+        checked_terminal
+            .draw(|frame| draw(frame, &checked_app))
+            .unwrap();
+        assert!(
+            checked_terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .any(|cell| {
+                    cell.symbol() == "■"
+                        && cell.fg == Color::White
+                        && cell.bg == Color::DarkGray
+                        && !cell.modifier.contains(Modifier::REVERSED)
+                })
+        );
         assert!(
             terminal
                 .backend()
