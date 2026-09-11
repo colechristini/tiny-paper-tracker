@@ -451,10 +451,8 @@ impl App {
             return;
         }
         let group_id = self.group.as_ref().and_then(|selected| {
-            self.groups
-                .iter()
-                .find(|group| group.id == *selected && group.parent_id.is_none())
-                .map(|group| group.id.clone())
+            let group = self.groups.iter().find(|group| group.id == *selected)?;
+            Some(group.parent_id.clone().unwrap_or_else(|| group.id.clone()))
         });
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
@@ -479,8 +477,18 @@ impl App {
         };
         match outcome.expect("outcome set for active receiver") {
             Ok(result) => {
+                let item_id = result.item.id.clone();
+                self.focus_added_item(&result.item);
                 self.add = None;
                 self.refresh(bridge);
+                if let Some(row) = self
+                    .display_occurrences()
+                    .iter()
+                    .find(|(_, occurrence)| occurrence.id == item_id)
+                    .map(|(row, _)| *row)
+                {
+                    self.selected = row;
+                }
                 self.notice = Some(format!(
                     "{}: {}",
                     if result.created {
@@ -499,6 +507,35 @@ impl App {
             }
         }
         true
+    }
+    fn focus_added_item(&mut self, item: &Item) {
+        let destination = self.group.clone().and_then(|selected| {
+            self.groups
+                .iter()
+                .find(|group| group.id == selected)
+                .map(|group| group.parent_id.clone().unwrap_or_else(|| group.id.clone()))
+        });
+        if let Some(destination) = destination {
+            self.group = Some(destination);
+        }
+        if self.filter != StatusFilter::All && self.filter.as_str() != item.status {
+            self.filter = StatusFilter::All;
+        }
+        let has_note = item
+            .note_path
+            .as_deref()
+            .is_some_and(|path| !path.is_empty());
+        if (self.note_filter == NoteFilter::HasNote && !has_note)
+            || (self.note_filter == NoteFilter::NoNote && has_note)
+        {
+            self.note_filter = NoteFilter::All;
+        }
+        if !self.query.is_empty() {
+            let query = self.query.to_lowercase();
+            if !item.title.to_lowercase().contains(&query) {
+                self.query.clear();
+            }
+        }
     }
     pub fn begin_membership(&mut self) {
         let Some(item) = self.selected_item() else {
@@ -537,7 +574,7 @@ impl App {
                 (g.id.clone(), label)
             })
             .collect::<Vec<_>>();
-        let checked = choices
+        let mut checked: Vec<bool> = choices
             .iter()
             .map(|(id, _)| {
                 item.groups
@@ -545,6 +582,19 @@ impl App {
                     .any(|v| v.get("id").and_then(|x| x.as_str()) == Some(id))
             })
             .collect();
+        for (index, (id, _)) in choices.iter().enumerate() {
+            if checked[index]
+                && let Some(parent_id) = self
+                    .groups
+                    .iter()
+                    .find(|group| group.id == *id)
+                    .and_then(|group| group.parent_id.as_ref())
+                && let Some(parent_index) =
+                    choices.iter().position(|(choice, _)| choice == parent_id)
+            {
+                checked[parent_index] = true;
+            }
+        }
         self.membership = Some(MembershipState {
             item_id: item.id.clone(),
             choices,
@@ -554,18 +604,67 @@ impl App {
         self.error = None;
     }
     pub fn membership_key(&mut self, key: crossterm::event::KeyCode) {
-        let Some(picker) = self.membership.as_mut() else {
+        let Some(picker) = self.membership.as_ref() else {
             return;
         };
+        let selected = picker.selected;
+        let selected_id = picker.choices.get(selected).map(|(id, _)| id.clone());
         match key {
             crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
-                picker.selected = picker.selected.saturating_sub(1)
+                if let Some(picker) = self.membership.as_mut() {
+                    picker.selected = picker.selected.saturating_sub(1)
+                }
             }
             crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
-                picker.selected = (picker.selected + 1).min(picker.choices.len().saturating_sub(1))
+                if let Some(picker) = self.membership.as_mut() {
+                    picker.selected =
+                        (picker.selected + 1).min(picker.choices.len().saturating_sub(1))
+                }
             }
             crossterm::event::KeyCode::Char(' ') if !picker.choices.is_empty() => {
-                picker.checked[picker.selected] = !picker.checked[picker.selected];
+                let parent_id = selected_id.as_deref().and_then(|id| {
+                    self.groups
+                        .iter()
+                        .find(|group| group.id == id)
+                        .and_then(|group| group.parent_id.as_deref())
+                });
+                let child_ids = selected_id.as_deref().filter(|id| {
+                    self.groups
+                        .iter()
+                        .any(|group| group.parent_id.as_deref() == Some(id))
+                });
+                let child_group_ids = child_ids.map(|root_id| {
+                    self.groups
+                        .iter()
+                        .filter(|group| group.parent_id.as_deref() == Some(root_id))
+                        .map(|group| group.id.clone())
+                        .collect::<HashSet<_>>()
+                });
+                if let Some(picker) = self.membership.as_mut() {
+                    let was_checked = picker.checked[selected];
+                    picker.checked[selected] = !was_checked;
+                    if !was_checked {
+                        if let Some(parent_id) = parent_id
+                            && let Some(parent_index) =
+                                picker.choices.iter().position(|(id, _)| id == parent_id)
+                        {
+                            picker.checked[parent_index] = true;
+                        }
+                    } else if let Some(root_id) = child_ids
+                        && let Some(root_index) =
+                            picker.choices.iter().position(|(id, _)| id == root_id)
+                    {
+                        for (index, (id, _)) in picker.choices.iter().enumerate() {
+                            if child_group_ids
+                                .as_ref()
+                                .is_some_and(|children| children.contains(id))
+                            {
+                                picker.checked[index] = false;
+                            }
+                        }
+                        picker.checked[root_index] = false;
+                    }
+                }
             }
             _ => {}
         }
@@ -1055,6 +1154,41 @@ mod tests {
     }
 
     #[test]
+    fn add_focus_clears_only_filters_that_hide_the_result() {
+        let mut app = App {
+            groups: vec![
+                group("root", "Root", None),
+                group("child", "Child", Some("root")),
+                group("other", "Other", None),
+            ],
+            group: Some("child".into()),
+            filter: StatusFilter::Unread,
+            note_filter: NoteFilter::NoNote,
+            query: "paper".into(),
+            ..Default::default()
+        };
+        let mut added = item("Paper");
+        added.status = "read".into();
+        added.note_path = Some("note.md".into());
+        added.authors = vec!["Author".into()];
+        app.focus_added_item(&added);
+        assert_eq!(app.group.as_deref(), Some("root"));
+        assert_eq!(app.filter, StatusFilter::All);
+        assert_eq!(app.note_filter, NoteFilter::All);
+        assert_eq!(app.query, "paper");
+
+        app.group = Some("other".into());
+        app.filter = StatusFilter::Read;
+        app.note_filter = NoteFilter::HasNote;
+        app.query = "missing".into();
+        app.focus_added_item(&added);
+        assert_eq!(app.group.as_deref(), Some("other"));
+        assert_eq!(app.filter, StatusFilter::Read);
+        assert_eq!(app.note_filter, NoteFilter::HasNote);
+        assert!(app.query.is_empty());
+    }
+
+    #[test]
     fn group_cycle_ignores_child_groups() {
         let mut app = App {
             groups: vec![
@@ -1117,7 +1251,7 @@ mod tests {
     }
 
     #[test]
-    fn membership_checks_only_the_items_direct_groups() {
+    fn membership_draft_checks_legacy_child_parent_without_mutating_item() {
         let mut paper = item("x");
         paper.groups = vec![serde_json::json!({"id": "child", "name": "Child"})];
         let mut app = App {
@@ -1131,7 +1265,98 @@ mod tests {
 
         app.begin_membership();
 
-        assert_eq!(app.membership.as_ref().unwrap().checked, vec![false, true]);
+        assert_eq!(app.membership.as_ref().unwrap().checked, vec![true, true]);
+    }
+
+    #[test]
+    fn membership_toggle_cascades_only_in_the_required_direction() {
+        let mut app = App {
+            items: vec![item("x")],
+            groups: vec![
+                group("root", "Root", None),
+                group("child", "Child", Some("root")),
+            ],
+            ..Default::default()
+        };
+        app.begin_membership();
+
+        // Selecting a child checks its parent.
+        app.membership_key(crossterm::event::KeyCode::Down);
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        assert_eq!(app.membership.as_ref().unwrap().checked, vec![true, true]);
+
+        // Clearing the parent clears children; selecting the parent does not
+        // select them again.
+        app.membership_key(crossterm::event::KeyCode::Up);
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        assert_eq!(app.membership.as_ref().unwrap().checked, vec![false, false]);
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        assert_eq!(app.membership.as_ref().unwrap().checked, vec![true, false]);
+
+        // Clearing a child leaves its parent checked.
+        app.membership_key(crossterm::event::KeyCode::Down);
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        assert_eq!(app.membership.as_ref().unwrap().checked, vec![true, false]);
+    }
+
+    #[test]
+    fn membership_parent_clear_does_not_touch_sibling_or_other_root() {
+        let mut app = App {
+            items: vec![item("x")],
+            groups: vec![
+                group("root", "Root", None),
+                group("child-a", "A", Some("root")),
+                group("child-b", "B", Some("root")),
+                group("other", "Other", None),
+                group("other-child", "A", Some("other")),
+            ],
+            ..Default::default()
+        };
+        app.begin_membership();
+        let root = app
+            .membership
+            .as_ref()
+            .unwrap()
+            .choices
+            .iter()
+            .position(|(id, _)| id == "root")
+            .unwrap();
+        let child_a = app
+            .membership
+            .as_ref()
+            .unwrap()
+            .choices
+            .iter()
+            .position(|(id, _)| id == "child-a")
+            .unwrap();
+        let child_b = app
+            .membership
+            .as_ref()
+            .unwrap()
+            .choices
+            .iter()
+            .position(|(id, _)| id == "child-b")
+            .unwrap();
+        let other_child = app
+            .membership
+            .as_ref()
+            .unwrap()
+            .choices
+            .iter()
+            .position(|(id, _)| id == "other-child")
+            .unwrap();
+        app.membership.as_mut().unwrap().selected = child_a;
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        app.membership.as_mut().unwrap().selected = child_b;
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        app.membership.as_mut().unwrap().selected = other_child;
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        app.membership.as_mut().unwrap().selected = root;
+        app.membership_key(crossterm::event::KeyCode::Char(' '));
+        let checked = &app.membership.as_ref().unwrap().checked;
+        assert!(!checked[child_a] && !checked[child_b] && !checked[root]);
+        assert!(checked[other_child]);
     }
 
     #[test]

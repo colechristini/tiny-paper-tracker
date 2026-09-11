@@ -10,6 +10,9 @@
   the nearest surviving paper when a mutation or filter removes it.
 - Empty subgroup headings are hidden from filtered reading lists while all
   groups remain available in the membership picker.
+- Membership editing keeps parent and child checks consistent in the draft:
+  selecting a child checks its parent, and clearing a parent clears its children.
+- Document line-clear and backward-word shortcuts, including terminal fallbacks.
 
 ## [0.3.0] — 2026-09-10
 

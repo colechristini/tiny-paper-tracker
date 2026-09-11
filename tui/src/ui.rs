@@ -205,7 +205,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             ])
             .split(inner);
         frame.render_widget(
-            Paragraph::new("Direct checks; child groups also count in parent."),
+            Paragraph::new("Child checks include parent; clearing parent clears children."),
             rows[0],
         );
         let items = if picker.choices.is_empty() {
@@ -921,7 +921,7 @@ mod tests {
         let text = buffer_text(&terminal);
         assert!(text.contains("Group 34"));
         assert!(!text.contains("Group 02"));
-        assert!(text.contains("Direct checks; child groups also count in parent."));
+        assert!(text.contains("Child checks include parent"));
         assert!(text.contains("Space toggle · Enter apply · Esc cancel"));
         let buffer = terminal.backend().buffer();
         assert!(buffer.content().iter().any(|cell| cell.symbol() == "›"));
