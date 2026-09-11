@@ -213,6 +213,10 @@ terminal fallback), and `Option-Delete` deletes the previous word (with
 rename, and search inputs where the terminal sends the corresponding control
 key.
 
+`Return` continues a list in the note editor: `- ` adds another bullet,
+`1. ` advances to `2. `, and `a. ` advances to `b. `. Indentation is
+preserved. Press `Return` on an empty list item to end the list.
+
 SQLite stores only the note path. Registered absolute paths and legacy relative
 vault paths remain supported, while new notes can live anywhere in the flat
 configured notes directory. A missing registered note is an error so the tool

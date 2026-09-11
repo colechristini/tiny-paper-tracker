@@ -519,7 +519,7 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
                 changed = true;
             }
             KeyCode::Enter => {
-                editor.buffer.insert("\n");
+                editor.buffer.insert_newline_with_list_continuation();
                 changed = true;
             }
             KeyCode::Backspace => {
