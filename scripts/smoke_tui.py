@@ -254,6 +254,39 @@ def run(binary: Path) -> dict[str, object]:
             )
             note_path = note_files(notes_dir)[0]
 
+            # Exercise the legacy control bytes that work without enhanced
+            # keyboard reporting. They must arrive through the real PTY, not
+            # only as synthetic crossterm KeyEvents in Rust unit tests.
+            session.send(b"\x02")  # Ctrl-B: open bold markers.
+            session.send("bold")
+            session.send(b"\x02")  # Ctrl-B: skip the matching closer.
+            session.send(" ")
+            session.send(b"\x14")  # Ctrl-T: open italic markers.
+            session.send("italic")
+            session.send(b"\x14")  # Ctrl-T: skip the matching closer.
+            session.send(b"\x01")  # Ctrl-A: logical line start.
+            session.send("START ")
+            session.send(b"\x05")  # Ctrl-E: logical line end.
+            session.send(" END")
+            session.send(b"\x10")  # Ctrl-P: previous word.
+            session.send("PRE-")
+            session.send(b"\x0e")  # Ctrl-N: next word.
+            session.send("!")
+            session.send("\r")
+            session.send(b"\x09")  # Tab/Ctrl-I: italic without completion.
+            session.send("tab")
+            session.send(b"\x09")
+            portable_text = "START **bold** *italic*--- PRE-END!\n*tab*"
+            try:
+                session.wait_for_file(
+                    lambda: portable_text in note_path.read_text(encoding="utf-8"),
+                    "portable control-key editing",
+                )
+            except SmokeFailure as error:
+                raise SmokeFailure(
+                    f"{error}\nnote contents: {note_path.read_text(encoding='utf-8')!r}"
+                ) from error
+
             note_path.write_text(
                 note_path.read_text(encoding="utf-8") + "\nEXTERNAL EDIT\n",
                 encoding="utf-8",
@@ -264,7 +297,7 @@ def run(binary: Path) -> dict[str, object]:
             session.send(b"\x13")  # Ctrl-S
             session.wait_until(lambda output: "Save failed:" in output, "external-edit conflict")
             session.reset_output()
-            session.send(b"\x05")  # Ctrl-E
+            session.send(b"\x07")  # Ctrl-G
             session.wait_for_file(
                 lambda: (
                     recovery_files(notes_dir)
@@ -280,6 +313,14 @@ def run(binary: Path) -> dict[str, object]:
             session.send("\x1b[B")  # select Beta
             session.send("\r")
             session.wait_for_file(lambda: len(note_files(notes_dir)) == 2, "second note editor")
+            session.send("@Alp")
+            session.wait_until(lambda output: "Links" in output, "link completion")
+            session.send(b"\x09")  # Tab accepts completion instead of formatting.
+            beta_path = note_files(notes_dir)[-1]
+            session.wait_for_file(
+                lambda: "[Alpha](<" in beta_path.read_text(encoding="utf-8"),
+                "Tab link completion",
+            )
             long_text = "# Preview\n\n" + ("terminal preview word " * 40) + "PREVIEW-END-MARKER"
             session.paste(long_text)
             session.wait_for_file(
@@ -290,7 +331,6 @@ def run(binary: Path) -> dict[str, object]:
                 ),
                 "autosaved preview content",
             )
-            beta_path = note_files(notes_dir)[-1]
             before_preview = beta_path.read_text(encoding="utf-8")
             session.reset_output()
             session.send(b"\x16")  # Ctrl-V
@@ -317,6 +357,7 @@ def run(binary: Path) -> dict[str, object]:
                 "status": "passed",
                 "items": 2,
                 "unicode_autosave": True,
+                "portable_control_shortcuts": True,
                 "external_conflict_recovery": True,
                 "preview_end_marker": True,
             }

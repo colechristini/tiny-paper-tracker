@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add portable Ctrl shortcuts for formatting and word/line navigation;
+  move note recovery to Ctrl-G so Ctrl-E can move to the line end.
 - Wrap long lines visually in the note editor and add Command-B/Command-I
   shortcuts for bold and italic Markdown.
 - Add Option-Left/Right word navigation and Command-Left/Right line navigation

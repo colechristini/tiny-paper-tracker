@@ -373,7 +373,7 @@ fn draw_editor(frame: &mut Frame, app: &App) {
                     ("Ctrl-V", " preview/edit"),
                     ("Ctrl-S", " save"),
                     ("Esc", " save and return"),
-                    ("Ctrl-E", " recovery"),
+                    ("Ctrl-G", " recovery"),
                     ("Ctrl-Q", " save+quit"),
                     ("arrows/PageUp/PageDown", " scroll"),
                 ],
@@ -467,10 +467,11 @@ fn draw_editor(frame: &mut Frame, app: &App) {
                 ("Ctrl-S", " save"),
                 ("Esc", " save and return"),
                 ("Ctrl-Q", " save and quit"),
-                ("Ctrl-E", " recovery copy"),
-                ("Cmd-B/I", " format"),
-                ("Alt-←/→", " word"),
-                ("Cmd-←/→", " line"),
+                ("Ctrl-G", " recovery copy"),
+                ("Ctrl-B/T", " format"),
+                ("Ctrl-A/E", " line"),
+                ("Ctrl-P/N", " word"),
+                ("Ctrl-←/→", " word"),
                 ("arrows/Home/End/PageUp/PageDown", " move"),
             ],
         )
@@ -670,7 +671,7 @@ mod tests {
     #[test]
     fn tiny_editor_render_handles_unicode_and_metadata() {
         let app = App {
-            error: Some("save failed: conflict; Ctrl-E recovery".into()),
+            error: Some("save failed: conflict; Ctrl-G recovery".into()),
             editor: Some(EditorState {
                 item_id: "x".into(),
                 buffer: TextBuffer::new("世界\nlong line 🙂\n".into()),
