@@ -90,6 +90,8 @@ fn run(
                         app.insert_add_text(&text);
                     } else if app.rename.is_some() {
                         app.insert_rename_text(&text);
+                    } else if app.searching {
+                        app.search_input.push_str(&text.replace(['\r', '\n'], " "));
                     } else if app.editor.as_ref().is_some_and(|e| !e.preview) {
                         app.insert_editor_text(&text);
                         if let Some(editor) = app.editor.as_mut() {
@@ -129,15 +131,21 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
             .intersects(KeyModifiers::SUPER | KeyModifiers::META);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if (command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
-            || (ctrl && key.code == KeyCode::Char('u'))
-        {
+        if command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
             if let Some(add) = app.add.as_mut() {
                 add.buffer.clear();
             }
             return;
         }
-        if alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
+        if ctrl && key.code == KeyCode::Char('u') {
+            if let Some(add) = app.add.as_mut() {
+                add.buffer.clear();
+            }
+            return;
+        }
+        if (ctrl && key.code == KeyCode::Char('w'))
+            || (alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+        {
             if let Some(add) = app.add.as_mut() {
                 add.buffer.delete_word_backwards();
             }
@@ -195,15 +203,21 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
             .intersects(KeyModifiers::SUPER | KeyModifiers::META);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if (command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
-            || (ctrl && key.code == KeyCode::Char('u'))
-        {
+        if command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
             if let Some(rename) = app.rename.as_mut() {
                 rename.buffer.clear();
             }
             return;
         }
-        if alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
+        if ctrl && key.code == KeyCode::Char('u') {
+            if let Some(rename) = app.rename.as_mut() {
+                rename.buffer.clear();
+            }
+            return;
+        }
+        if (ctrl && key.code == KeyCode::Char('w'))
+            || (alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+        {
             if let Some(rename) = app.rename.as_mut() {
                 rename.buffer.delete_word_backwards();
             }
@@ -254,22 +268,8 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
         return;
     }
     if app.searching {
-        let command = key
-            .modifiers
-            .intersects(KeyModifiers::SUPER | KeyModifiers::META);
-        let alt = key.modifiers.contains(KeyModifiers::ALT);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        if (command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
-            || (ctrl && key.code == KeyCode::Char('u'))
-        {
-            app.search_input.clear();
-            return;
-        }
-        if alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete) {
-            let mut buffer = lit_tui::editor::TextBuffer::new(app.search_input.clone());
-            buffer.end();
-            buffer.delete_word_backwards();
-            app.search_input = buffer.text();
+        if apply_search_edit(&mut app.search_input, key) {
             return;
         }
         match key.code {
@@ -333,9 +333,7 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
             app.cycle_group(-1);
             app.refresh(bridge);
         }
-        KeyCode::Delete | KeyCode::Backspace if key.modifiers.is_empty() => {
-            app.delete_selected(bridge)
-        }
+        KeyCode::Delete | KeyCode::Backspace if is_plain_delete(key) => app.delete_selected(bridge),
         KeyCode::Char('/') => {
             app.searching = true;
             app.search_input = app.query.clone();
@@ -346,12 +344,57 @@ fn handle_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
     }
 }
 
-fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+fn is_plain_delete(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Delete | KeyCode::Backspace) && key.modifiers.is_empty()
+}
+
+fn apply_search_edit(search: &mut String, key: KeyEvent) -> bool {
     let command = key
         .modifiers
         .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
+    if (command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+        || (ctrl && key.code == KeyCode::Char('u'))
+    {
+        search.clear();
+        return true;
+    }
+    if (ctrl && key.code == KeyCode::Char('w'))
+        || (alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+    {
+        let mut buffer = lit_tui::editor::TextBuffer::new(search.clone());
+        buffer.end();
+        buffer.delete_word_backwards();
+        *search = buffer.text();
+        return true;
+    }
+    false
+}
+
+fn apply_note_edit_shortcut(buffer: &mut lit_tui::editor::TextBuffer, key: KeyEvent) -> bool {
+    let command = key
+        .modifiers
+        .intersects(KeyModifiers::SUPER | KeyModifiers::META);
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    if (command && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+        || (ctrl && key.code == KeyCode::Char('u'))
+    {
+        buffer.delete_line();
+        return true;
+    }
+    if (ctrl && key.code == KeyCode::Char('w'))
+        || (alt && matches!(key.code, KeyCode::Backspace | KeyCode::Delete))
+    {
+        buffer.delete_word_backwards();
+        return true;
+    }
+    false
+}
+
+fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Rect) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if ctrl && key.code == KeyCode::Char('v') {
         if let Some(editor) = app.editor.as_mut() {
             editor.completion = None;
@@ -467,80 +510,64 @@ fn handle_editor_key(app: &mut App, bridge: &mut Bridge, key: KeyEvent, area: Re
     }
     let mut changed = false;
     let mut moved = false;
-    match key.code {
-        KeyCode::Char(c) if !ctrl => {
-            editor.buffer.insert(&c.to_string());
-            changed = true;
+    if apply_note_edit_shortcut(&mut editor.buffer, key) {
+        changed = true;
+    } else {
+        match key.code {
+            KeyCode::Char(c) if !ctrl => {
+                editor.buffer.insert(&c.to_string());
+                changed = true;
+            }
+            KeyCode::Enter => {
+                editor.buffer.insert("\n");
+                changed = true;
+            }
+            KeyCode::Backspace => {
+                let before = editor.buffer.text();
+                editor.buffer.backspace();
+                changed = before != editor.buffer.text();
+            }
+            KeyCode::Delete => {
+                let before = editor.buffer.text();
+                editor.buffer.delete();
+                changed = before != editor.buffer.text();
+            }
+            KeyCode::Left => {
+                editor.buffer.left();
+                moved = true;
+            }
+            KeyCode::Right => {
+                editor.buffer.right();
+                moved = true;
+            }
+            KeyCode::Up => {
+                editor.buffer.up();
+                moved = true;
+            }
+            KeyCode::Down => {
+                editor.buffer.down();
+                moved = true;
+            }
+            KeyCode::Home => {
+                editor.buffer.home();
+                moved = true;
+            }
+            KeyCode::End => {
+                editor.buffer.end();
+                moved = true;
+            }
+            KeyCode::PageUp => {
+                editor.buffer.page_up(10);
+                editor.scroll = editor.scroll.saturating_sub(10);
+                moved = true;
+            }
+            KeyCode::PageDown => {
+                editor.buffer.page_down(10);
+                editor.scroll = editor.scroll.saturating_add(10);
+                moved = true;
+            }
+            _ => {}
         }
-        KeyCode::Enter => {
-            editor.buffer.insert("\n");
-            changed = true;
-        }
-        KeyCode::Backspace | KeyCode::Delete if command => {
-            let before = editor.buffer.text();
-            editor.buffer.clear();
-            changed = before != editor.buffer.text();
-        }
-        KeyCode::Char('u') if ctrl => {
-            let before = editor.buffer.text();
-            editor.buffer.delete_line();
-            changed = before != editor.buffer.text();
-        }
-        KeyCode::Char('w') if ctrl => {
-            let before = editor.buffer.text();
-            editor.buffer.delete_word_backwards();
-            changed = before != editor.buffer.text();
-        }
-        KeyCode::Backspace | KeyCode::Delete if alt => {
-            let before = editor.buffer.text();
-            editor.buffer.delete_word_backwards();
-            changed = before != editor.buffer.text();
-        }
-        KeyCode::Backspace => {
-            let before = editor.buffer.text();
-            editor.buffer.backspace();
-            changed = before != editor.buffer.text();
-        }
-        KeyCode::Delete => {
-            let before = editor.buffer.text();
-            editor.buffer.delete();
-            changed = before != editor.buffer.text();
-        }
-        KeyCode::Left => {
-            editor.buffer.left();
-            moved = true;
-        }
-        KeyCode::Right => {
-            editor.buffer.right();
-            moved = true;
-        }
-        KeyCode::Up => {
-            editor.buffer.up();
-            moved = true;
-        }
-        KeyCode::Down => {
-            editor.buffer.down();
-            moved = true;
-        }
-        KeyCode::Home => {
-            editor.buffer.home();
-            moved = true;
-        }
-        KeyCode::End => {
-            editor.buffer.end();
-            moved = true;
-        }
-        KeyCode::PageUp => {
-            editor.buffer.page_up(10);
-            editor.scroll = editor.scroll.saturating_sub(10);
-            moved = true;
-        }
-        KeyCode::PageDown => {
-            editor.buffer.page_down(10);
-            editor.scroll = editor.scroll.saturating_add(10);
-            moved = true;
-        }
-        _ => {}
     }
     if changed {
         editor.mark_changed();
@@ -594,7 +621,9 @@ fn wrapped_lines(text: &ratatui::text::Text<'static>, width: u16) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::wrapped_lines;
+    use super::{apply_note_edit_shortcut, apply_search_edit, is_plain_delete, wrapped_lines};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use lit_tui::editor::TextBuffer;
     use ratatui::text::Text;
     #[test]
     fn wrapped_preview_scroll_counts_long_paragraphs() {
@@ -602,5 +631,31 @@ mod tests {
         assert!(wrapped_lines(&text, 38) > 50);
         assert_eq!(wrapped_lines(&Text::raw("short"), 38), 1);
         assert_eq!(wrapped_lines(&Text::raw("123456 123456 123456"), 10), 3);
+    }
+
+    #[test]
+    fn modified_delete_edits_note_line_and_cannot_delete_list_item() {
+        let mut buffer = TextBuffer::new("first\nsecond\nlast".into());
+        buffer.cursor = 8;
+        let command_delete = KeyEvent::new(KeyCode::Delete, KeyModifiers::SUPER);
+        assert!(apply_note_edit_shortcut(&mut buffer, command_delete));
+        assert_eq!(buffer.text(), "first\nlast");
+
+        assert!(is_plain_delete(KeyEvent::new(
+            KeyCode::Delete,
+            KeyModifiers::NONE
+        )));
+        assert!(!is_plain_delete(command_delete));
+        assert!(!is_plain_delete(KeyEvent::new(
+            KeyCode::Delete,
+            KeyModifiers::ALT
+        )));
+
+        let mut search = "unicode 世界".to_string();
+        assert!(apply_search_edit(
+            &mut search,
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)
+        ));
+        assert_eq!(search, "unicode ");
     }
 }
